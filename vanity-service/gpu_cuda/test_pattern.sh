@@ -1,4 +1,4 @@
-#!/bin/bash
+up_gpu.sh#!/bin/bash
 
 echo "编译测试程序..."
 gcc -o test_simple test_simple.cu
