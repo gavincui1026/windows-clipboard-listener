@@ -57,6 +57,12 @@ class TronGPUGenerator:
             prefix = pattern
             suffix = ""
         
+        # TRON地址都以'T'开头，不需要匹配
+        # 去掉前缀中的'T'
+        if prefix.startswith('T'):
+            prefix = prefix[1:]
+            print(f"   实际匹配: {prefix}...{suffix} (去掉了固定的'T')")
+        
         # 准备输出缓冲区
         address_buffer = ctypes.create_string_buffer(35)
         private_key_buffer = ctypes.create_string_buffer(65)
@@ -65,7 +71,8 @@ class TronGPUGenerator:
         max_attempts = int(timeout * 10_000_000)  # 假设1000万/秒
         
         print(f"🚀 C++ CUDA生成开始")
-        print(f"   模式: {prefix}...{suffix}")
+        print(f"   原始模式: {pattern}")
+        print(f"   实际匹配: {prefix}...{suffix} (共{len(prefix)+len(suffix)}个字符)")
         print(f"   最大尝试: {max_attempts:,}")
         
         # 调用CUDA函数

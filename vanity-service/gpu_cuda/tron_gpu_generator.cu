@@ -287,10 +287,11 @@ __device__ void generate_tron_address(const uint256_t* private_key, char* addres
 
 // 模式匹配
 __device__ bool match_pattern(const char* address, const char* prefix, const char* suffix) {
-    // 匹配前缀
+    // TRON地址都以'T'开头，跳过第一个字符
+    // 从索引1开始匹配前缀
     int prefix_len = 0;
     while (prefix[prefix_len] != '\0') {
-        if (address[prefix_len] != prefix[prefix_len]) {
+        if (address[prefix_len + 1] != prefix[prefix_len]) {  // +1 跳过'T'
             return false;
         }
         prefix_len++;
