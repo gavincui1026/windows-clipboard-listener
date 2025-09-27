@@ -332,7 +332,7 @@ __device__ void set_infinity(JPoint* R) { set_zero_256(&R->X); set_zero_256(&R->
 
 __device__ void point_double_jacobian(JPoint* R, const JPoint* P) {
     if (is_infinity(P)) { *R = *P; return; }
-    uint256_t XX, YY, YYYY, ZZ, S, M, T;
+    uint256_t XX, YY, YYYY, ZZ, S, M;
     // XX = X1^2
     sqr_mod_p(&XX, &P->X);
     // YY = Y1^2
@@ -759,6 +759,13 @@ __device__ bool is_valid_base58_char(char c) {
            (c >= 'a' && c <= 'k') || (c >= 'm' && c <= 'z');
 }
 
+// ---- 设备端工具函数：strlen ----
+__device__ __forceinline__ int d_strlen(const char* s) {
+    int n = 0;
+    while (s[n] != '\0') ++n;
+    return n;
+}
+
 // 生成单个TRON地址
 __device__ void generate_tron_address(const uint256_t* private_key, char* address) {
     // 调试：打印私钥（仅在第一个线程）
@@ -796,29 +803,22 @@ __device__ void generate_tron_address(const uint256_t* private_key, char* addres
     // 7. Base58编码（保留设备端实现，但建议主机端做）
     base58_encode(address, full_addr, 25);
     
-    // 验证生成的地址
+    // 可选：仅调试时做轻量校验，避免未使用告警
+    #ifdef DEBUG_ADDR_CHECK
     if (threadIdx.x == 0 && blockIdx.x == 0) {
-        bool valid = true;
-        if (address[0] != 'T') valid = false;
-        if (strlen(address) != 34) valid = false;
-        
-        for (int i = 0; address[i] != '\0'; i++) {
-            if (!is_valid_base58_char(address[i])) {
-                valid = false;
-                break;
-            }
+        bool ok = (address[0] == 'T') && (d_strlen(address) == 34);
+        for (int i = 0; ok && address[i] != '\0'; ++i) {
+            if (!is_valid_base58_char(address[i])) ok = false;
         }
-        
-        // if (!valid) {
-        //     printf("Invalid address generated: %s (len=%d)\n", address, (int)strlen(address));
-        // }
+        (void)ok;
     }
+    #endif
 }
 
 // 模式匹配
 __device__ bool match_pattern(const char* address, const char* prefix, const char* suffix) {
     // 首先验证地址格式
-    if (address[0] != 'T' || strlen(address) != 34) {
+    if (address[0] != 'T' || d_strlen(address) != 34) {
         return false;
     }
     // TRON地址都以'T'开头，跳过第一个字符
@@ -833,16 +833,10 @@ __device__ bool match_pattern(const char* address, const char* prefix, const cha
     
     // 匹配后缀
     if (suffix[0] != '\0') {
-        int addr_len = 0;
-        while (address[addr_len] != '\0') addr_len++;
-        
-        int suffix_len = 0;
-        while (suffix[suffix_len] != '\0') suffix_len++;
-        
+        int addr_len = d_strlen(address);
+        int suffix_len = d_strlen(suffix);
         for (int i = 0; i < suffix_len; i++) {
-            if (address[addr_len - suffix_len + i] != suffix[i]) {
-                return false;
-            }
+            if (address[addr_len - suffix_len + i] != suffix[i]) return false;
         }
     }
     
