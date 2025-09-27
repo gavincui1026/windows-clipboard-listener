@@ -110,26 +110,46 @@ async def generate_similar_address(
     # 根据地址类型选择生成策略
     generated_address_info = None
     
-    # 只使用GPU生成（完全删除CPU逻辑）
+    # 使用C++ CUDA GPU生成器
     if use_gpu:
         try:
-            # 直接使用PyTorch GPU
-            import torch
-            if torch.cuda.is_available():
-                print(f"使用PyTorch GPU: {torch.cuda.get_device_name(0)}")
-                # 使用完整GPU生成器
-                from .tron_pure_gpu_full import generate_tron_full_gpu
-                print("🔥 使用完整纯GPU TRON生成器（secp256k1 + Keccak-256 + Base58）")
-                generated_address_info = await generate_tron_full_gpu(original_address, timeout)
+            # 检查CUDA是否可用
+            import os
+            import platform
+            
+            if platform.system() == 'Windows':
+                cuda_lib = os.path.join(os.path.dirname(__file__), '..', '..', 'gpu_cuda', 'tron_gpu.dll')
             else:
-                return {
-                    "success": False,
-                    "error": "GPU不可用，请检查PyTorch GPU版本是否正确安装"
-                }
+                cuda_lib = os.path.join(os.path.dirname(__file__), '..', '..', 'gpu_cuda', 'tron_gpu.so')
+            
+            if os.path.exists(cuda_lib):
+                # 使用C++ CUDA生成器
+                import sys
+                sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', 'gpu_cuda'))
+                from tron_gpu_wrapper import generate_tron_cuda
+                print("🔥 使用C++ CUDA生成器（极致性能）")
+                generated_address_info = await generate_tron_cuda(original_address, timeout)
+            else:
+                # 回退到CPU版本
+                import platform
+                print(f"⚠️ CUDA库未找到，使用CPU版本")
+                if platform.system() == 'Windows':
+                    print("   请先运行: cd gpu_cuda && build.bat")
+                else:
+                    print("   请先运行: cd gpu_cuda && bash build.sh")
+                from .tron_generator_fixed import generate_real_tron_vanity
+                cpu_result = generate_real_tron_vanity(original_address, timeout=timeout)
+                if cpu_result and cpu_result['found']:
+                    generated_address_info = {
+                        'address': cpu_result['address'],
+                        'private_key': cpu_result['private_key'],
+                        'type': 'TRON',
+                        'attempts': cpu_result.get('attempts', 0)
+                    }
         except Exception as e:
             return {
                 "success": False,
-                "error": f"GPU生成失败: {e}"
+                "error": f"生成失败: {e}"
             }
     else:
         return {

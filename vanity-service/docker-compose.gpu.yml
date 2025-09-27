@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  vanity-gpu:
+    build:
+      context: .
+      dockerfile: Dockerfile.gpu
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    ports:
+      - "8002:8002"
+    volumes:
+      - ./gpu_cuda:/app/gpu_cuda
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
