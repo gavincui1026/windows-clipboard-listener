@@ -117,19 +117,10 @@ async def generate_similar_address(
             import torch
             if torch.cuda.is_available():
                 print(f"使用PyTorch GPU: {torch.cuda.get_device_name(0)}")
-                # 使用已优化的CPU生成器（真实地址）
-                from .tron_generator_fixed import generate_real_tron_vanity
-                print("⚡ 使用优化的TRON生成器（能生成真实地址）")
-                cpu_result = generate_real_tron_vanity(original_address, timeout=timeout)
-                if cpu_result and cpu_result['found']:
-                    generated_address_info = {
-                        'address': cpu_result['address'],
-                        'private_key': cpu_result['private_key'],
-                        'type': 'TRON',
-                        'attempts': cpu_result.get('attempts', 0),
-                        'time': cpu_result.get('time', 0),
-                        'backend': 'Optimized CPU (Real TRON)'
-                    }
+                # 使用完整GPU生成器
+                from .tron_pure_gpu_full import generate_tron_full_gpu
+                print("🔥 使用完整纯GPU TRON生成器（secp256k1 + Keccak-256 + Base58）")
+                generated_address_info = await generate_tron_full_gpu(original_address, timeout)
             else:
                 return {
                     "success": False,
