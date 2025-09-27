@@ -45,7 +45,7 @@ __constant__ uint64_t SECP256K1_GY[4] = {
 };
 
 // Base58字符集
-__constant__ char BASE58_ALPHABET[58] = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+__constant__ char BASE58_ALPHABET[59] = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 
 // 256位整数结构
 struct uint256_t {
