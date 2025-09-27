@@ -1,0 +1,6 @@
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+pyjwt==2.9.0
+SQLAlchemy==2.0.35
+PyMySQL==1.1.1
+aiohttp==3.9.1  # HTTP客户端，用于调用微服务和Telegram API

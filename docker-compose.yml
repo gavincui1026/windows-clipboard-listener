@@ -1,0 +1,68 @@
+version: '3.8'
+
+services:
+  # MySQL数据库
+  db:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: clipboard_db
+      MYSQL_USER: clipboard_user
+      MYSQL_PASSWORD: clipboard_pass
+    ports:
+      - "3306:3306"
+    volumes:
+      - db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      timeout: 20s
+      retries: 10
+
+  # Vanity地址生成服务
+  vanity-service:
+    build: ./vanity-service
+    ports:
+      - "8002:8002"
+    environment:
+      - PORT=8002
+      - GPU_TOOLS_PATH=/app/gpu_tools
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./vanity-service/gpu_tools:/app/gpu_tools
+    restart: unless-stopped
+
+  # 主API服务
+  api:
+    build: ./server
+    ports:
+      - "8001:8001"
+    environment:
+      - PORT=8001
+      - DB_HOST=db
+      - DB_USER=clipboard_user
+      - DB_PASSWORD=clipboard_pass
+      - DB_NAME=clipboard_db
+      - JWT_SECRET=your-secret-key-here
+      - VANITY_SERVICE_URL=http://vanity-service:8002
+      - PYTHONUNBUFFERED=1
+    depends_on:
+      db:
+        condition: service_healthy
+      vanity-service:
+        condition: service_started
+    restart: unless-stopped
+
+  # 前端Admin（开发环境）
+  # admin:
+  #   build: ./admin
+  #   ports:
+  #     - "5173:5173"
+  #   environment:
+  #     - VITE_API_URL=http://localhost:8000
+  #   volumes:
+  #     - ./admin:/app
+  #     - /app/node_modules
+  #   command: npm run dev -- --host
+
+volumes:
+  db_data:

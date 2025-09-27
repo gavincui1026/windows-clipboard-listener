@@ -1,0 +1,23 @@
+# Web框架
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+pydantic==2.10.4
+
+# 异步支持
+aiohttp==3.9.1
+asyncio==3.4.3
+
+# 加密货币地址生成
+ecdsa==0.19.0          # TRON/BTC椭圆曲线
+base58==2.1.1          # Base58编码
+eth-account==0.13.4    # ETH/BNB地址生成
+pycryptodome==3.20.0   # 通用加密算法（包含Keccak256）
+
+# 性能优化
+coincurve==20.0.0      # 更快的secp256k1（可选）
+
+# GPU支持（可选）
+# pycuda==2024.1        # CUDA支持（需要NVIDIA驱动）
+
+# 工具
+python-multipart==0.0.20

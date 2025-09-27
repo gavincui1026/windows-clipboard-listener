@@ -1,0 +1,352 @@
+/* 全局样式重置 */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+:root {
+  /* 主题色 */
+  --primary-color: #409eff;
+  --success-color: #67c23a;
+  --warning-color: #e6a23c;
+  --danger-color: #f56c6c;
+  --info-color: #909399;
+  
+  /* 中性色 */
+  --text-primary: #303133;
+  --text-regular: #606266;
+  --text-secondary: #909399;
+  --text-placeholder: #c0c4cc;
+  --border-base: #dcdfe6;
+  --border-light: #e4e7ed;
+  --border-lighter: #ebeef5;
+  --border-extra-light: #f2f6fc;
+  
+  /* 背景色 */
+  --bg-color: #ffffff;
+  --bg-page: #f5f7fa;
+  --bg-sidebar: #304156;
+  
+  /* 过渡效果 */
+  --transition-base: all 0.3s cubic-bezier(0.645, 0.045, 0.355, 1);
+}
+
+/* 暗色模式 */
+html.dark {
+  --text-primary: #e5eaf3;
+  --text-regular: #cfd3dc;
+  --text-secondary: #a3a6ad;
+  --text-placeholder: #8d9095;
+  --border-base: #4c4d4f;
+  --border-light: #414243;
+  --border-lighter: #363637;
+  --border-extra-light: #2b2b2c;
+  --bg-color: #141414;
+  --bg-page: #0a0a0a;
+  --bg-sidebar: #1f1f1f;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, 'Noto Sans', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background-color: var(--bg-page);
+  color: var(--text-primary);
+  transition: var(--transition-base);
+}
+
+#app {
+  width: 100%;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* 滚动条样式 */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg-page);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-base);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--border-light);
+}
+
+/* Element Plus 样式覆盖 */
+.el-container {
+  width: 100%;
+  height: 100%;
+}
+
+.el-main {
+  width: 100%;
+  padding: 0;
+  overflow: visible;
+  max-width: none !important;
+}
+
+/* 确保容器正确显示 */
+body > #app {
+  width: 100vw;
+  overflow-x: hidden;
+}
+
+.el-menu {
+  border-right: none !important;
+}
+
+.el-menu-item {
+  transition: var(--transition-base);
+}
+
+.el-menu-item:hover {
+  background-color: rgba(64, 158, 255, 0.1) !important;
+}
+
+.el-menu-item.is-active {
+  background-color: rgba(64, 158, 255, 0.15) !important;
+  border-right: 3px solid var(--primary-color);
+}
+
+/* 侧边栏样式 */
+.sidebar-container {
+  background-color: var(--bg-sidebar);
+  transition: width 0.3s;
+  width: 210px !important;
+  height: 100%;
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 1001;
+  overflow: hidden;
+}
+
+.sidebar-container.collapse {
+  width: 64px !important;
+}
+
+.sidebar-logo {
+  height: 60px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: rgba(0, 0, 0, 0.1);
+  transition: var(--transition-base);
+}
+
+.sidebar-logo h1 {
+  color: #fff;
+  font-size: 20px;
+  margin: 0;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 主内容区域 */
+.main-container {
+  min-height: 100vh;
+  transition: margin-left 0.3s, width 0.3s;
+  margin-left: 210px;
+  position: relative;
+  background-color: var(--bg-page);
+  width: calc(100% - 210px);
+  overflow-x: hidden;
+}
+
+.main-container.collapse {
+  margin-left: 64px;
+  width: calc(100% - 64px);
+}
+
+/* 顶部导航栏 */
+.navbar {
+  height: 60px;
+  background-color: var(--bg-color);
+  box-shadow: 0 1px 4px rgba(0, 21, 41, 0.08);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 20px;
+  position: sticky;
+  top: 0;
+  z-index: 999;
+}
+
+.navbar-left {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.navbar-right {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+/* 面包屑 */
+.breadcrumb-container {
+  display: flex;
+  align-items: center;
+}
+
+/* 页面内容 */
+.app-main {
+  padding: 20px;
+  min-height: calc(100vh - 60px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  width: 100%;
+  max-width: none !important;
+  box-sizing: border-box;
+}
+
+/* 页面内容容器样式 */
+.page-container {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 0 24px;
+}
+
+/* 卡片样式 */
+.el-card {
+  border-radius: 8px;
+  border: 1px solid var(--border-lighter);
+  box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.05);
+  transition: var(--transition-base);
+}
+
+.el-card:hover {
+  box-shadow: 0 4px 20px 0 rgba(0, 0, 0, 0.08);
+}
+
+/* 表格样式 */
+.el-table {
+  font-size: 14px;
+}
+
+.el-table th {
+  background-color: var(--bg-page) !important;
+  color: var(--text-regular) !important;
+  font-weight: 600;
+}
+
+/* 按钮样式增强 */
+.el-button {
+  border-radius: 6px;
+  font-weight: 500;
+  transition: all 0.3s;
+}
+
+.el-button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(64, 158, 255, 0.3);
+}
+
+/* 输入框样式 */
+.el-input__wrapper {
+  border-radius: 6px;
+  transition: var(--transition-base);
+}
+
+.el-input__wrapper:hover {
+  box-shadow: 0 0 0 1px var(--primary-color);
+}
+
+/* 动画类 */
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.3s;
+}
+
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}
+
+.slide-fade-enter-active {
+  transition: all 0.3s ease-out;
+}
+
+.slide-fade-leave-active {
+  transition: all 0.3s cubic-bezier(1, 0.5, 0.8, 1);
+}
+
+.slide-fade-enter-from,
+.slide-fade-leave-to {
+  transform: translateX(20px);
+  opacity: 0;
+}
+
+/* 响应式 */
+@media screen and (max-width: 768px) {
+  .sidebar-container {
+    width: 0 !important;
+  }
+  
+  .sidebar-container.mobile-show {
+    width: 210px !important;
+  }
+  
+  .main-container {
+    margin-left: 0;
+    width: 100%;
+  }
+}
+
+/* 加载动画 */
+.loading-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100vh;
+}
+
+/* 统计卡片 */
+.stat-card {
+  background: linear-gradient(135deg, var(--primary-color) 0%, #66b1ff 100%);
+  color: white;
+  padding: 20px;
+  border-radius: 12px;
+  box-shadow: 0 4px 20px rgba(64, 158, 255, 0.3);
+  transition: transform 0.3s;
+}
+
+.stat-card:hover {
+  transform: translateY(-5px);
+  box-shadow: 0 8px 30px rgba(64, 158, 255, 0.4);
+}
+
+.stat-card .stat-value {
+  font-size: 36px;
+  font-weight: 700;
+  margin: 10px 0;
+}
+
+.stat-card .stat-label {
+  font-size: 14px;
+  opacity: 0.9;
+}
+
+/* 暗色模式切换按钮 */
+.theme-switch {
+  cursor: pointer;
+  font-size: 20px;
+  color: var(--text-regular);
+  transition: color 0.3s;
+}
+
+.theme-switch:hover {
+  color: var(--primary-color);
+}

@@ -1,0 +1,45 @@
+version: '3.8'
+
+services:
+  vanity-service:
+    build: .
+    ports:
+      - "8001:8001"
+    environment:
+      - GPU_TOOLS_PATH=/app/gpu_tools
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./gpu_tools:/app/gpu_tools  # 挂载GPU工具目录
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 4G
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # GPU版本（需要nvidia-docker）
+  # vanity-service-gpu:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile
+  #     target: gpu
+  #   ports:
+  #     - "8001:8001"
+  #   environment:
+  #     - GPU_TOOLS_PATH=/app/gpu_tools
+  #     - NVIDIA_VISIBLE_DEVICES=all
+  #   volumes:
+  #     - ./gpu_tools:/app/gpu_tools
+  #   deploy:
+  #     resources:
+  #       reservations:
+  #         devices:
+  #           - driver: nvidia
+  #             count: 1
+  #             capabilities: [gpu]
+  #   restart: unless-stopped

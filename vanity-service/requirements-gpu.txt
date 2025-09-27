@@ -1,0 +1,32 @@
+# GPU加速库 - 跨平台统一安装
+# 选择适合你的GPU和平台的版本
+
+# ===== NVIDIA GPU (CUDA) =====
+# CuPy - NumPy兼容的GPU加速库
+# 根据CUDA版本选择：
+# CUDA 11.2-11.8
+cupy-cuda11x==13.0.0
+
+# CUDA 12.x (最新)
+# cupy-cuda12x==13.0.0
+
+# Numba - JIT编译器，支持CUDA
+numba==0.60.0
+
+# PyCUDA - 低级CUDA接口（可选）
+# pycuda==2024.1.2
+
+# ===== 跨平台GPU (OpenCL) =====
+# PyOpenCL - 支持NVIDIA/AMD/Intel GPU
+pyopencl==2024.2.7
+
+# ===== 深度学习框架（可选）=====
+# PyTorch (包含GPU支持)
+# torch==2.4.0
+# 安装命令：pip install torch --index-url https://download.pytorch.org/whl/cu121
+
+# JAX (Google的GPU加速库)
+# jax[cuda12]==0.4.35
+
+# ===== 其他依赖 =====
+numpy==1.26.4
