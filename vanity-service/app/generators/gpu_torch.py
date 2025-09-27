@@ -178,13 +178,19 @@ async def generate_address_torch_gpu(address: str, address_type: str, timeout: f
         return None
         
     if address_type == 'TRON':
-        # 如果要求2秒内完成，自动优化模式
-        if timeout <= 2.0:
-            analysis = torch_generator.analyze_pattern(address)
-            if not analysis['recommended']:
-                recommended = recommend_pattern(address, address_type, 0.95)
-                print(f"⚡ 自动优化模式: {address} → {recommended}")
-                address = recommended
+        # 分析模式难度
+        analysis = torch_generator.analyze_pattern(address)
+        
+        # 如果要求2秒内完成且成功率低，自动优化模式
+        if timeout <= 2.0 and not analysis['recommended']:
+            recommended = recommend_pattern(address, address_type, 0.95)
+            print(f"⚡ 自动优化模式: {address} → {recommended}")
+            address = recommended
+        elif timeout > 2.0 and not analysis['recommended']:
+            # 长时间运行时，显示预期时间
+            expected_attempts = int(1 / (1 / (58 ** analysis['match_chars'])))
+            expected_time = expected_attempts / 10_000_000  # 假设1000万/秒
+            print(f"⏱️ 预计需要: {expected_time:.1f}秒 (匹配{analysis['match_chars']}个字符)")
                 
         return await torch_generator.generate_tron_gpu(address, timeout)
     

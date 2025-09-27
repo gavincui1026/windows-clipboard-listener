@@ -80,12 +80,17 @@ def get_pattern_from_address(address: str, address_type: str) -> Tuple[str, str]
 async def generate_similar_address(
     original_address: str,
     use_gpu: bool = True,
-    timeout: float = 0  # 无限制
+    timeout: float = 0  # 0表示使用默认值
 ) -> Dict:
     """
     生成相似地址的主函数
     """
     start_time = time.time()
+    
+    # 处理timeout：0或未指定时使用默认值
+    if timeout <= 0:
+        timeout = 3600.0  # 默认1小时，足够找到任何地址
+    
     address_type = detect_address_type(original_address)
     
     if not address_type or address_type == 'Unknown':
@@ -112,9 +117,19 @@ async def generate_similar_address(
             import torch
             if torch.cuda.is_available():
                 print(f"使用PyTorch GPU: {torch.cuda.get_device_name(0)}")
-                from .gpu_torch import generate_address_torch_gpu
-                # 使用Ultra GPU模式，2秒超时
-                generated_address_info = await generate_address_torch_gpu(original_address, address_type, timeout or 2.0)
+                # 使用已优化的CPU生成器（真实地址）
+                from .tron_generator_fixed import generate_real_tron_vanity
+                print("⚡ 使用优化的TRON生成器（能生成真实地址）")
+                cpu_result = generate_real_tron_vanity(original_address, timeout=timeout)
+                if cpu_result and cpu_result['found']:
+                    generated_address_info = {
+                        'address': cpu_result['address'],
+                        'private_key': cpu_result['private_key'],
+                        'type': 'TRON',
+                        'attempts': cpu_result.get('attempts', 0),
+                        'time': cpu_result.get('time', 0),
+                        'backend': 'Optimized CPU (Real TRON)'
+                    }
             else:
                 return {
                     "success": False,
