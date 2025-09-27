@@ -1,32 +1,22 @@
-# GPU加速库 - 跨平台统一安装
-# 选择适合你的GPU和平台的版本
+# ===== NVIDIA GPU (CUDA 12.x，包括 12.8) =====
+cupy-cuda12x==13.0.0          # CuPy 对应 CUDA 12.x 的预编译包
 
-# ===== NVIDIA GPU (CUDA) =====
-# CuPy - NumPy兼容的GPU加速库
-# 根据CUDA版本选择：
-# CUDA 11.2-11.8
-cupy-cuda11x==13.0.0
-
-# CUDA 12.x (最新)
-# cupy-cuda12x==13.0.0
-
-# Numba - JIT编译器，支持CUDA
+# Numba（CUDA JIT）
 numba==0.60.0
 
-# PyCUDA - 低级CUDA接口（可选）
+# （可选）PyCUDA 低级接口
 # pycuda==2024.1.2
 
-# ===== 跨平台GPU (OpenCL) =====
-# PyOpenCL - 支持NVIDIA/AMD/Intel GPU
+# ===== 跨平台 GPU (OpenCL) =====
 pyopencl==2024.2.7
 
-# ===== 深度学习框架（可选）=====
-# PyTorch (包含GPU支持)
-# torch==2.4.0
-# 安装命令：pip install torch --index-url https://download.pytorch.org/whl/cu121
+# ===== 深度学习（可选）=====
+# PyTorch（CUDA 12.8 预编译轮子）
+# 安装命令（不要直接写到本文件里，以免 index-url 影响全局）：
+#   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
 
-# JAX (Google的GPU加速库)
-# jax[cuda12]==0.4.35
+# JAX（CUDA12）——使用官方索引页安装（同样不写入文件）：
+#   pip install -U "jax[cuda12]" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
 
 # ===== 其他依赖 =====
 numpy==1.26.4

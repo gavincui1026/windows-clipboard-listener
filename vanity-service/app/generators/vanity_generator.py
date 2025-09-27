@@ -105,7 +105,7 @@ async def generate_similar_address(
     # 根据地址类型选择生成策略
     generated_address_info = None
     
-    # 尝试GPU生成
+    # 只使用GPU生成（完全删除CPU逻辑）
     if use_gpu:
         try:
             # 直接使用PyTorch GPU
@@ -113,45 +113,23 @@ async def generate_similar_address(
             if torch.cuda.is_available():
                 print(f"使用PyTorch GPU: {torch.cuda.get_device_name(0)}")
                 from .gpu_torch import generate_address_torch_gpu
-                generated_address_info = await generate_address_torch_gpu(original_address, address_type, timeout or 5.0)
+                # 使用Ultra GPU模式，2秒超时
+                generated_address_info = await generate_address_torch_gpu(original_address, address_type, timeout or 2.0)
             else:
-                # 备选方案：使用通用GPU生成器
-                from .gpu_universal import generate_address_gpu, get_gpu_info
-                gpu_info = get_gpu_info()
-                if gpu_info['available']:
-                    print(f"使用备选GPU: {gpu_info['backend']} - {gpu_info['device']}")
-                    generated_address_info = await generate_address_gpu(original_address, address_type, timeout or 5.0)
-        except Exception as e:
-            print(f"GPU生成失败: {e}")
-    
-    # 如果GPU失败或不可用，使用CPU
-    if not generated_address_info:
-        if address_type == 'TRON':
-            from .tron_generator_fixed import generate_real_tron_vanity
-            cpu_result = generate_real_tron_vanity(original_address, timeout=timeout)
-            if cpu_result and cpu_result['found']:
-                generated_address_info = {
-                    'address': cpu_result['address'],
-                    'private_key': cpu_result['private_key'],
-                    'type': 'TRON',
-                    'attempts': cpu_result.get('attempts', 0)
+                return {
+                    "success": False,
+                    "error": "GPU不可用，请检查PyTorch GPU版本是否正确安装"
                 }
-        elif address_type in ['ETH', 'BNB']:
-            from .eth_generator import generate_eth_vanity
-            cpu_result = await generate_eth_vanity(prefix, suffix, timeout)
-            if cpu_result:
-                generated_address_info = cpu_result
-        elif address_type.startswith('BTC'):
-            from .btc_generator import generate_btc_vanity
-            cpu_result = await generate_btc_vanity(address_type, prefix, suffix, timeout)
-            if cpu_result:
-                generated_address_info = cpu_result
-        else:
-            # Solana等其他币种
+        except Exception as e:
             return {
                 "success": False,
-                "error": f"暂不支持{address_type}地址的生成"
+                "error": f"GPU生成失败: {e}"
             }
+    else:
+        return {
+            "success": False,
+            "error": "该服务仅支持GPU模式，请设置use_gpu=true"
+        }
     
     # 返回结果
     if generated_address_info:
