@@ -80,16 +80,14 @@ def get_pattern_from_address(address: str, address_type: str) -> Tuple[str, str]
 async def generate_similar_address(
     original_address: str,
     use_gpu: bool = True,
-    timeout: float = 0  # 0表示使用默认值
+    timeout: float = 0
 ) -> Dict:
     """
     生成相似地址的主函数
     """
     start_time = time.time()
     
-    # 处理timeout：0或未指定时使用默认值
-    if timeout <= 0:
-        timeout = 3600.0  # 默认1小时，足够找到任何地址
+    # 新约定：timeout<=0 表示不限时，直到找到为止
     
     address_type = detect_address_type(original_address)
     

@@ -11,6 +11,9 @@
 #include <string.h>
 #include <time.h>
 #include <stdlib.h>
+#include <algorithm>
+#include <math.h>
+using namespace std;
 
 // 定义uint128_t (Linux/GCC)
 #ifdef __GNUC__
@@ -52,29 +55,187 @@ struct uint256_t {
     uint64_t data[4];
 };
 
+// 前向声明
+__device__ int cmp_256(const uint256_t* a, const uint256_t* b);
+
+// 辅助：从4xuint64装配uint256_t（按现有小端分段顺序）
+__device__ __forceinline__ uint256_t make_u256(const uint64_t a[4]) {
+    uint256_t r; r.data[0]=a[0]; r.data[1]=a[1]; r.data[2]=a[2]; r.data[3]=a[3]; return r;
+}
+
 // 点结构
 struct Point {
     uint256_t x;
     uint256_t y;
 };
 
-// GPU大数运算
+// 基础256位加/减（带正确进位/借位）
 __device__ void add_256(uint256_t* result, const uint256_t* a, const uint256_t* b) {
     uint64_t carry = 0;
     for (int i = 0; i < 4; i++) {
-        uint64_t sum = a->data[i] + b->data[i] + carry;
-        result->data[i] = sum;
-        carry = (sum < a->data[i]) ? 1 : 0;
+        uint64_t s = a->data[i] + b->data[i];
+        uint64_t c1 = (s < a->data[i]) ? 1 : 0;
+        uint64_t s2 = s + carry;
+        uint64_t c2 = (s2 < s) ? 1 : 0;
+        result->data[i] = s2;
+        carry = c1 | c2;
     }
 }
 
 __device__ void sub_256(uint256_t* result, const uint256_t* a, const uint256_t* b) {
     uint64_t borrow = 0;
     for (int i = 0; i < 4; i++) {
-        uint64_t diff = a->data[i] - b->data[i] - borrow;
-        result->data[i] = diff;
-        borrow = (diff > a->data[i]) ? 1 : 0;
+        uint64_t ai = a->data[i];
+        uint64_t bi = b->data[i];
+        uint64_t d = ai - bi;
+        uint64_t b1 = (ai < bi) ? 1 : 0;
+        uint64_t d2 = d - borrow;
+        uint64_t b2 = (d < borrow) ? 1 : 0;
+        result->data[i] = d2;
+        borrow = b1 | b2;
     }
+}
+
+// 判断是否为0
+__device__ bool is_zero_256(const uint256_t* a) {
+    return (a->data[0] | a->data[1] | a->data[2] | a->data[3]) == 0ULL;
+}
+
+// 设定为常数 0 或 1
+__device__ void set_zero_256(uint256_t* a) { a->data[0]=a->data[1]=a->data[2]=a->data[3]=0ULL; }
+__device__ void set_one_256(uint256_t* a) { a->data[0]=1ULL; a->data[1]=a->data[2]=a->data[3]=0ULL; }
+
+// 有限域p上的加减乘（secp256k1）
+__device__ void add_mod_p(uint256_t* r, const uint256_t* x, const uint256_t* y) {
+    uint256_t t;
+    add_256(&t, x, y);
+    uint256_t P = make_u256(SECP256K1_P);
+    if (cmp_256(&t, &P) >= 0) {
+        sub_256(&t, &t, &P);
+    }
+    *r = t;
+}
+
+__device__ void sub_mod_p(uint256_t* r, const uint256_t* x, const uint256_t* y) {
+    uint256_t P = make_u256(SECP256K1_P);
+    if (cmp_256(x, y) >= 0) {
+        sub_256(r, x, y);
+    } else {
+        uint256_t t; add_256(&t, x, &P); sub_256(r, &t, y);
+    }
+}
+
+// 256x256 -> 512 宽乘
+__device__ void mul_wide_256(uint64_t out[8], const uint256_t* a, const uint256_t* b) {
+    for (int i = 0; i < 8; i++) out[i] = 0ULL;
+    for (int i = 0; i < 4; i++) {
+        uint64_t ai = a->data[i];
+        uint64_t carry = 0ULL;
+        for (int j = 0; j < 4; j++) {
+            uint64_t bj = b->data[j];
+            uint64_t lo = ai * bj;
+            uint64_t hi = __umul64hi(ai, bj);
+
+            // out[i+j] += lo + carry
+            uint64_t s = out[i + j] + lo;
+            uint64_t c0 = (s < out[i + j]) ? 1 : 0;
+            uint64_t s2 = s + carry;
+            uint64_t c1 = (s2 < s) ? 1 : 0;
+            out[i + j] = s2;
+
+            carry = hi + c0 + c1;
+        }
+        // 传播剩余进位
+        int k = i + 4;
+        while (carry != 0ULL) {
+            uint64_t s = out[k] + carry;
+            uint64_t c = (s < carry) ? 1 : 0;
+            out[k] = s;
+            carry = c;
+            k++;
+        }
+    }
+}
+
+// 针对 p=2^256-2^32-977 的快速归约
+__device__ void mod_p(uint256_t* r, const uint64_t x[8]) {
+    // 初步折叠：t = L + (H<<32) + 977*H
+    uint64_t T[5]; for (int i=0;i<5;i++) T[i]=0ULL;
+    // L 部分
+    for (int i=0;i<4;i++) T[i] = x[i];
+
+    // 加 (H << 32)
+    uint64_t carry = 0ULL;
+    for (int i=0;i<4;i++) {
+        uint64_t low = x[4 + i] << 32;
+        uint64_t high = x[4 + i] >> 32;
+        // T[i] += low
+        uint64_t s = T[i] + low;
+        uint64_t c0 = (s < T[i]) ? 1 : 0;
+        T[i] = s;
+        // T[i+1] += high + c0
+        uint64_t s2 = T[i+1] + high + c0;
+        uint64_t c1 = (s2 < T[i+1]) ? 1 : 0;
+        if (high + c0 > s2) c1 = 1; // 更稳健（避免优化器合并）
+        T[i+1] = s2;
+        // 进位继续向更高位传播（很少发生）
+        int k = i + 2;
+        uint64_t c = c1 ? 1ULL : 0ULL;
+        while (c && k < 5) { uint64_t s3 = T[k] + c; uint64_t c2 = (s3 < T[k]) ? 1 : 0; T[k]=s3; c = c2; k++; }
+    }
+
+    // 加 977*H
+    for (int i=0;i<4;i++) {
+        uint64_t hk = x[4+i];
+        uint64_t low = hk * 977ULL;
+        uint64_t high = __umul64hi(hk, 977ULL);
+        // T[i] += low
+        uint64_t s = T[i] + low;
+        uint64_t c0 = (s < T[i]) ? 1 : 0;
+        T[i] = s;
+        // T[i+1] += high + c0
+        uint64_t s2 = T[i+1] + high + c0;
+        uint64_t c1 = (s2 < T[i+1]) ? 1 : 0; if (high + c0 > s2) c1 = 1;
+        T[i+1] = s2;
+        int k = i + 2; uint64_t c = c1 ? 1ULL : 0ULL;
+        while (c && k < 5) { uint64_t s3 = T[k] + c; uint64_t c2 = (s3 < T[k]) ? 1 : 0; T[k]=s3; c = c2; k++; }
+    }
+
+    // 第二次折叠：仅用 H2 = T[4]
+    uint64_t V[4]; for (int i=0;i<4;i++) V[i]=T[i];
+    uint64_t H2 = T[4];
+    if (H2) {
+        // 加 (H2 << 32)
+        uint64_t low = H2 << 32;
+        uint64_t high = H2 >> 32;
+        uint64_t s = V[0] + low; uint64_t c0 = (s < V[0]) ? 1 : 0; V[0]=s;
+        uint64_t s2 = V[1] + high + c0; uint64_t c1 = (s2 < V[1]) ? 1 : 0; if (high + c0 > s2) c1 = 1; V[1]=s2;
+        int k=2; uint64_t c=c1?1ULL:0ULL; while (c && k<4){ uint64_t s3=V[k]+c; uint64_t c2=(s3<V[k])?1:0; V[k]=s3; c=c2; k++; }
+
+        // 加 977*H2
+        uint64_t low2 = H2 * 977ULL;
+        uint64_t high2 = __umul64hi(H2, 977ULL);
+        s = V[0] + low2; c0 = (s < V[0]) ? 1 : 0; V[0]=s;
+        s2 = V[1] + high2 + c0; c1 = (s2 < V[1]) ? 1 : 0; if (high2 + c0 > s2) c1 = 1; V[1]=s2;
+        k=2; c=c1?1ULL:0ULL; while (c && k<4){ uint64_t s3=V[k]+c; uint64_t c2=(s3<V[k])?1:0; V[k]=s3; c=c2; k++; }
+    }
+
+    uint256_t tmp; tmp.data[0]=V[0]; tmp.data[1]=V[1]; tmp.data[2]=V[2]; tmp.data[3]=V[3];
+    uint256_t P = make_u256(SECP256K1_P);
+    // 最终条件减 p（最多两次）
+    if (cmp_256(&tmp, &P) >= 0) { sub_256(&tmp, &tmp, &P); }
+    if (cmp_256(&tmp, &P) >= 0) { sub_256(&tmp, &tmp, &P); }
+    *r = tmp;
+}
+
+__device__ void mul_mod_p(uint256_t* r, const uint256_t* a, const uint256_t* b) {
+    uint64_t w[8];
+    mul_wide_256(w, a, b);
+    mod_p(r, w);
+}
+
+__device__ void sqr_mod_p(uint256_t* r, const uint256_t* a) {
+    mul_mod_p(r, a, a);
 }
 
 __device__ void mul_256(uint256_t* result, const uint256_t* a, const uint256_t* b) {
@@ -124,23 +285,10 @@ __device__ void mul_256(uint256_t* result, const uint256_t* a, const uint256_t* 
     }
 }
 
+// 保留但不再用于场p：通用模（仅限小数值，避免误用）
 __device__ void mod_256(uint256_t* result, const uint256_t* a, const uint256_t* m) {
-    // 完整的模运算实现
     uint256_t temp = *a;
-    
-    // 对于secp256k1的p，使用特殊优化
-    if (m == (uint256_t*)SECP256K1_P) {
-        // 快速归约算法
-        while (cmp_256(&temp, m) >= 0) {
-            sub_256(&temp, &temp, m);
-        }
-    } else {
-        // 通用模运算
-        while (cmp_256(&temp, m) >= 0) {
-            sub_256(&temp, &temp, m);
-        }
-    }
-    
+    while (cmp_256(&temp, m) >= 0) { sub_256(&temp, &temp, m); }
     *result = temp;
 }
 
@@ -153,97 +301,141 @@ __device__ int cmp_256(const uint256_t* a, const uint256_t* b) {
     return 0;
 }
 
-// 模逆运算 - 使用扩展欧几里得算法
-__device__ void mod_inverse(uint256_t* result, const uint256_t* a, const uint256_t* m) {
-    // 使用费马小定理对secp256k1: a^(p-2) mod p = a^(-1) mod p
-    // p-2 = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2D
-    uint256_t exp;
-    exp.data[0] = 0xFFFFFC2DULL;
-    exp.data[1] = 0xFFFFFFFEFFFFFFFFULL;
-    exp.data[2] = 0xFFFFFFFFFFFFFFFFULL;
-    exp.data[3] = 0xFFFFFFFFFFFFFFFFULL;
-    
-    // 快速幂算法
+// 模逆：使用 a^(p-2) mod p（依赖正确的 mul_mod_p）
+__device__ void mod_inverse_p(uint256_t* result, const uint256_t* a) {
+    // exp = p-2
+    uint256_t exp; exp.data[0]=0xFFFFFFFEFFFFFC2DULL; exp.data[1]=0xFFFFFFFFFFFFFFFFULL; exp.data[2]=0xFFFFFFFFFFFFFFFFULL; exp.data[3]=0xFFFFFFFFFFFFFFFFULL;
     uint256_t base = *a;
-    uint256_t res;
-    res.data[0] = 1;
-    res.data[1] = 0;
-    res.data[2] = 0;
-    res.data[3] = 0;
-    
+    uint256_t res; set_one_256(&res);
+
     for (int i = 0; i < 256; i++) {
         int word_idx = i / 64;
         int bit_idx = i % 64;
-        
-        if ((exp.data[word_idx] >> bit_idx) & 1) {
-            mul_256(&res, &res, &base);
-            mod_256(&res, &res, m);
+        if ((exp.data[word_idx] >> bit_idx) & 1ULL) {
+            uint256_t t;
+            mul_mod_p(&t, &res, &base);
+            res = t;
         }
-        
         if (i < 255) {
-            mul_256(&base, &base, &base);
-            mod_256(&base, &base, m);
+            uint256_t t2; mul_mod_p(&t2, &base, &base); base = t2;
         }
     }
-    
     *result = res;
 }
 
-// 椭圆曲线点加法
-__device__ void point_add(Point* result, const Point* p1, const Point* p2) {
-    uint256_t s, dx, dy;
-    
-    // 计算斜率 s = (y2 - y1) / (x2 - x1) mod p
-    sub_256(&dy, &p2->y, &p1->y);
-    sub_256(&dx, &p2->x, &p1->x);
-    
-    uint256_t dx_inv;
-    mod_inverse(&dx_inv, &dx, (uint256_t*)SECP256K1_P);
-    mul_256(&s, &dy, &dx_inv);
-    mod_256(&s, &s, (uint256_t*)SECP256K1_P);
-    
-    // x3 = s^2 - x1 - x2 mod p
-    uint256_t s2;
-    mul_256(&s2, &s, &s);
-    sub_256(&result->x, &s2, &p1->x);
-    sub_256(&result->x, &result->x, &p2->x);
-    mod_256(&result->x, &result->x, (uint256_t*)SECP256K1_P);
-    
-    // y3 = s * (x1 - x3) - y1 mod p
-    sub_256(&dx, &p1->x, &result->x);
-    mul_256(&result->y, &s, &dx);
-    sub_256(&result->y, &result->y, &p1->y);
-    mod_256(&result->y, &result->y, (uint256_t*)SECP256K1_P);
+// Jacobian 坐标
+struct JPoint { uint256_t X; uint256_t Y; uint256_t Z; };
+
+__device__ bool is_infinity(const JPoint* P) { return is_zero_256(&P->Z); }
+
+__device__ void set_infinity(JPoint* R) { set_zero_256(&R->X); set_zero_256(&R->Y); set_zero_256(&R->Z); }
+
+__device__ void point_double_jacobian(JPoint* R, const JPoint* P) {
+    if (is_infinity(P)) { *R = *P; return; }
+    uint256_t XX, YY, YYYY, ZZ, S, M, T;
+    // XX = X1^2
+    sqr_mod_p(&XX, &P->X);
+    // YY = Y1^2
+    sqr_mod_p(&YY, &P->Y);
+    // YYYY = YY^2
+    sqr_mod_p(&YYYY, &YY);
+    // ZZ = Z1^2
+    sqr_mod_p(&ZZ, &P->Z);
+    // S = 4 * X1 * YY
+    uint256_t t1; mul_mod_p(&t1, &P->X, &YY); add_mod_p(&S, &t1, &t1); add_mod_p(&S, &S, &S); // *4
+    // M = 3 * XX
+    add_mod_p(&M, &XX, &XX); add_mod_p(&M, &M, &XX);
+    // T = M^2 - 2*S
+    uint256_t M2; sqr_mod_p(&M2, &M);
+    uint256_t twoS; add_mod_p(&twoS, &S, &S);
+    sub_mod_p(&R->X, &M2, &twoS);
+    // Y3 = M*(S - X3) - 8*YYYY
+    uint256_t S_minus_X3; sub_mod_p(&S_minus_X3, &S, &R->X);
+    uint256_t M_mul; mul_mod_p(&M_mul, &M, &S_minus_X3);
+    uint256_t eightYYYY; add_mod_p(&eightYYYY, &YYYY, &YYYY); // 2*YYYY
+    add_mod_p(&eightYYYY, &eightYYYY, &eightYYYY); // 4*
+    add_mod_p(&eightYYYY, &eightYYYY, &eightYYYY); // 8*
+    sub_mod_p(&R->Y, &M_mul, &eightYYYY);
+    // Z3 = 2*Y1*Z1
+    uint256_t YZ; mul_mod_p(&YZ, &P->Y, &P->Z);
+    add_mod_p(&R->Z, &YZ, &YZ);
 }
 
-// 椭圆曲线标量乘法
-__device__ void point_multiply(Point* result, const uint256_t* k) {
-    Point G = {{*((uint256_t*)SECP256K1_GX)}, {*((uint256_t*)SECP256K1_GY)}};
-    Point current = G;
-    
-    // 初始化为无穷远点
-    memset(result, 0, sizeof(Point));
-    bool first = true;
-    
-    // 双倍加算法
-    for (int i = 0; i < 256; i++) {
-        int word_idx = i / 64;
-        int bit_idx = i % 64;
-        
-        if ((k->data[word_idx] >> bit_idx) & 1) {
-            if (first) {
-                *result = current;
-                first = false;
-            } else {
-                point_add(result, result, &current);
-            }
-        }
-        
-        if (i < 255) {
-            point_add(&current, &current, &current);
+__device__ void point_add_jacobian(JPoint* R, const JPoint* P, const JPoint* Q) {
+    if (is_infinity(P)) { *R = *Q; return; }
+    if (is_infinity(Q)) { *R = *P; return; }
+    uint256_t Z1Z1, Z2Z2, U1, U2, S1, S2;
+    sqr_mod_p(&Z1Z1, &P->Z);
+    sqr_mod_p(&Z2Z2, &Q->Z);
+    // U1 = X1*Z2^2 ; U2 = X2*Z1^2
+    mul_mod_p(&U1, &P->X, &Z2Z2);
+    mul_mod_p(&U2, &Q->X, &Z1Z1);
+    // S1 = Y1*Z2^3 ; S2 = Y2*Z1^3
+    uint256_t Z2Z3, Z1Z3;
+    mul_mod_p(&Z2Z3, &Z2Z2, &Q->Z);
+    mul_mod_p(&Z1Z3, &Z1Z1, &P->Z);
+    mul_mod_p(&S1, &P->Y, &Z2Z3);
+    mul_mod_p(&S2, &Q->Y, &Z1Z3);
+
+    if (cmp_256(&U1, &U2) == 0) {
+        // 同x
+        if (cmp_256(&S1, &S2) != 0) { set_infinity(R); return; }
+        point_double_jacobian(R, P); return;
+    }
+
+    uint256_t H, Rr; sub_mod_p(&H, &U2, &U1); sub_mod_p(&Rr, &S2, &S1);
+    uint256_t H2; sqr_mod_p(&H2, &H);
+    uint256_t H3; mul_mod_p(&H3, &H, &H2);
+    uint256_t U1H2; mul_mod_p(&U1H2, &U1, &H2);
+    // X3 = Rr^2 - H3 - 2*U1H2
+    uint256_t Rr2; sqr_mod_p(&Rr2, &Rr);
+    uint256_t twoU1H2; add_mod_p(&twoU1H2, &U1H2, &U1H2);
+    uint256_t tmp; sub_mod_p(&tmp, &Rr2, &H3); sub_mod_p(&R->X, &tmp, &twoU1H2);
+    // Y3 = Rr*(U1H2 - X3) - S1*H3
+    uint256_t U1H2_minus_X3; sub_mod_p(&U1H2_minus_X3, &U1H2, &R->X);
+    uint256_t Rmul; mul_mod_p(&Rmul, &Rr, &U1H2_minus_X3);
+    uint256_t S1H3; mul_mod_p(&S1H3, &S1, &H3);
+    sub_mod_p(&R->Y, &Rmul, &S1H3);
+    // Z3 = H * Z1 * Z2
+    uint256_t Z1Z2; mul_mod_p(&Z1Z2, &P->Z, &Q->Z);
+    mul_mod_p(&R->Z, &Z1Z2, &H);
+}
+
+__device__ void scalar_mul(JPoint* R, const uint256_t* k) {
+    set_infinity(R);
+    // 基点（Jacobian）
+    JPoint G; G.X = make_u256(SECP256K1_GX); G.Y = make_u256(SECP256K1_GY); set_one_256(&G.Z);
+
+    for (int bit = 255; bit >= 0; bit--) {
+        // R = 2R
+        JPoint T; point_double_jacobian(&T, R); *R = T;
+        int w = bit / 64; int b = bit % 64;
+        if ((k->data[w] >> b) & 1ULL) {
+            JPoint U; point_add_jacobian(&U, R, &G); *R = U;
         }
     }
 }
+
+__device__ void jacobian_to_uncompressed65(const JPoint* P, uint8_t out65[65]) {
+    // 处理无穷远点（不应发生在有效私钥）
+    if (is_infinity(P)) { out65[0]=0x04; for(int i=1;i<65;i++) out65[i]=0; return; }
+    uint256_t Zinv, Zinv2, Zinv3, X, Y;
+    mod_inverse_p(&Zinv, &P->Z);
+    sqr_mod_p(&Zinv2, &Zinv);
+    mul_mod_p(&Zinv3, &Zinv2, &Zinv);
+    mul_mod_p(&X, &P->X, &Zinv2);
+    mul_mod_p(&Y, &P->Y, &Zinv3);
+    out65[0] = 0x04;
+    // 大端序序列化
+    for (int i = 0; i < 4; i++) {
+        for (int j = 0; j < 8; j++) {
+            out65[1 + i * 8 + j] = (X.data[3 - i] >> (56 - j * 8)) & 0xFF;
+            out65[33 + i * 8 + j] = (Y.data[3 - i] >> (56 - j * 8)) & 0xFF;
+        }
+    }
+}
+
+// 旧仿射标量乘不再使用
 
 // Keccak-256轮常数
 __constant__ uint64_t KECCAK_ROUND_CONSTANTS[24] = {
@@ -327,25 +519,29 @@ __device__ void keccak_f(uint64_t state[25]) {
     }
 }
 
+// Keccak 小端装载/存储
+__device__ __forceinline__ uint64_t load_le64(const uint8_t* p) {
+    return ((uint64_t)p[0])       | ((uint64_t)p[1] << 8 ) |
+           ((uint64_t)p[2] << 16) | ((uint64_t)p[3] << 24) |
+           ((uint64_t)p[4] << 32) | ((uint64_t)p[5] << 40) |
+           ((uint64_t)p[6] << 48) | ((uint64_t)p[7] << 56);
+}
+
 // 完整的Keccak-256实现
 __device__ void keccak256(uint8_t* output, const uint8_t* input, size_t len) {
     uint64_t state[25] = {0};
     const size_t rate = 136; // 1088 bits / 8 = 136 bytes
     size_t blockSize = 0;
     
-    // 吸收阶段
+    // 吸收阶段（逐字节异或，保证正确性）
     while (len > 0) {
         size_t toAbsorb = (len < rate - blockSize) ? len : rate - blockSize;
-        
-        // 将输入异或到状态中
         for (size_t i = 0; i < toAbsorb; i++) {
             ((uint8_t*)state)[blockSize + i] ^= input[i];
         }
-        
         blockSize += toAbsorb;
         input += toAbsorb;
         len -= toAbsorb;
-        
         if (blockSize == rate) {
             keccak_f(state);
             blockSize = 0;
@@ -357,8 +553,8 @@ __device__ void keccak256(uint8_t* output, const uint8_t* input, size_t len) {
     ((uint8_t*)state)[rate - 1] ^= 0x80;
     keccak_f(state);
     
-    // 挤压阶段 - 输出32字节
-    memcpy(output, state, 32);
+    // 挤压阶段 - 输出32字节（按小端顺序读出）
+    memcpy(output, (uint8_t*)state, 32);
 }
 
 // SHA-256常数
@@ -555,24 +751,32 @@ __device__ void base58_encode(char* output, const uint8_t* input, size_t len) {
     output[out_idx] = '\0';
 }
 
+// 验证Base58地址格式
+__device__ bool is_valid_base58_char(char c) {
+    // Base58字符集：123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz
+    return (c >= '1' && c <= '9') || 
+           (c >= 'A' && c <= 'H') || (c >= 'J' && c <= 'N') || (c >= 'P' && c <= 'Z') ||
+           (c >= 'a' && c <= 'k') || (c >= 'm' && c <= 'z');
+}
+
 // 生成单个TRON地址
 __device__ void generate_tron_address(const uint256_t* private_key, char* address) {
-    // 1. 计算公钥
-    Point public_key;
-    point_multiply(&public_key, private_key);
-    
-    // 2. 将公钥转换为字节数组
-    uint8_t pubkey_bytes[64];
-    for (int i = 0; i < 4; i++) {
-        for (int j = 0; j < 8; j++) {
-            pubkey_bytes[i * 8 + j] = (public_key.x.data[3-i] >> (56 - j * 8)) & 0xFF;
-            pubkey_bytes[32 + i * 8 + j] = (public_key.y.data[3-i] >> (56 - j * 8)) & 0xFF;
-        }
+    // 调试：打印私钥（仅在第一个线程）
+    if (threadIdx.x == 0 && blockIdx.x == 0) {
+        // printf("Private key: %016llx%016llx%016llx%016llx\n", 
+        //        private_key->data[3], private_key->data[2], 
+        //        private_key->data[1], private_key->data[0]);
     }
+    
+    // 1. 计算公钥（Jacobian）
+    JPoint R; scalar_mul(&R, private_key);
+    // 2. 仿射化并导出非压缩65字节公钥（0x04||X||Y）
+    uint8_t pubkey65[65]; jacobian_to_uncompressed65(&R, pubkey65);
     
     // 3. Keccak-256哈希
     uint8_t hash[32];
-    keccak256(hash, pubkey_bytes, 64);
+    // 以太坊/Tron对未压缩公钥使用去掉前缀的 (X||Y) 共64字节
+    keccak256(hash, pubkey65 + 1, 64);
     
     // 4. 构建地址（0x41前缀 + 后20字节）
     uint8_t addr_bytes[21];
@@ -589,12 +793,34 @@ __device__ void generate_tron_address(const uint256_t* private_key, char* addres
     memcpy(full_addr, addr_bytes, 21);
     memcpy(full_addr + 21, sha2, 4);
     
-    // 7. Base58编码
+    // 7. Base58编码（保留设备端实现，但建议主机端做）
     base58_encode(address, full_addr, 25);
+    
+    // 验证生成的地址
+    if (threadIdx.x == 0 && blockIdx.x == 0) {
+        bool valid = true;
+        if (address[0] != 'T') valid = false;
+        if (strlen(address) != 34) valid = false;
+        
+        for (int i = 0; address[i] != '\0'; i++) {
+            if (!is_valid_base58_char(address[i])) {
+                valid = false;
+                break;
+            }
+        }
+        
+        // if (!valid) {
+        //     printf("Invalid address generated: %s (len=%d)\n", address, (int)strlen(address));
+        // }
+    }
 }
 
 // 模式匹配
 __device__ bool match_pattern(const char* address, const char* prefix, const char* suffix) {
+    // 首先验证地址格式
+    if (address[0] != 'T' || strlen(address) != 34) {
+        return false;
+    }
     // TRON地址都以'T'开头，跳过第一个字符
     // 从索引1开始匹配前缀
     int prefix_len = 0;
@@ -636,16 +862,34 @@ __global__ void generate_batch(
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= batch_size) return;
     
-    // 生成私钥（使用线程ID和种子）
+    // 生成随机私钥
+    // 使用LCG（线性同余生成器）产生伪随机数
+    uint64_t rng_state = seed + idx;
     uint256_t private_key;
-    private_key.data[0] = seed + idx;
-    private_key.data[1] = seed ^ (idx * 0x9E3779B97F4A7C15ULL);
-    private_key.data[2] = seed + (idx * 0x6A09E667F3BCC908ULL);
-    private_key.data[3] = (seed ^ idx) & 0xFFFFFFFFFFFFFFFEULL;
     
-    // 确保私钥在有效范围内
-    while (private_key.data[3] >= SECP256K1_N[3]) {
-        private_key.data[3] >>= 1;
+    // 拒绝采样：生成直到 1 <= k < n
+    uint256_t N = make_u256(SECP256K1_N);
+    while (true) {
+        // 生成256位随机数（基于LCG混洗；生产应换为 Philox/os.urandom）
+        for (int i = 0; i < 4; i++) {
+            rng_state = rng_state * 6364136223846793005ULL + 1442695040888963407ULL;
+            uint64_t s = rng_state;
+            s ^= s >> 33; s *= 0xff51afd7ed558ccdULL; s ^= s >> 33;
+            private_key.data[i] = s;
+        }
+        // 检查范围
+        bool zero = (private_key.data[0]|private_key.data[1]|private_key.data[2]|private_key.data[3]) == 0ULL;
+        if (zero) continue;
+        // if k >= n，重抽
+        if (private_key.data[3] > N.data[3] ||
+            (private_key.data[3] == N.data[3] &&
+             (private_key.data[2] > N.data[2] ||
+              (private_key.data[2] == N.data[2] &&
+               (private_key.data[1] > N.data[1] ||
+                (private_key.data[1] == N.data[1] && private_key.data[0] >= N.data[0])))))) {
+            continue;
+        }
+        break;
     }
     
     // 生成地址
@@ -663,7 +907,41 @@ __global__ void generate_batch(
 }
 
 // C接口函数
+// 测试内核 - 生成固定地址
+__global__ void test_generation_kernel(char* output) {
+    if (threadIdx.x == 0 && blockIdx.x == 0) {
+        // 使用固定私钥测试
+        uint256_t test_key;
+        test_key.data[0] = 0x0123456789ABCDEFULL;
+        test_key.data[1] = 0xFEDCBA9876543210ULL;
+        test_key.data[2] = 0x1111111111111111ULL;
+        test_key.data[3] = 0x2222222222222222ULL;
+        
+        char test_addr[35];
+        generate_tron_address(&test_key, test_addr);
+        
+        // 复制到输出
+        for (int i = 0; i < 35; i++) {
+            output[i] = test_addr[i];
+        }
+    }
+}
+
 extern "C" {
+    // 测试函数
+    void test_address_generation(char* output) {
+        char* d_output;
+        cudaMalloc(&d_output, 35);
+        
+        test_generation_kernel<<<1, 1>>>(d_output);
+        cudaDeviceSynchronize();
+        
+        cudaMemcpy(output, d_output, 35, cudaMemcpyDeviceToHost);
+        cudaFree(d_output);
+        
+        printf("Test address generated: %s\n", output);
+    }
+    
     // 初始化CUDA
     int cuda_init() {
         int device_count;
@@ -694,6 +972,25 @@ extern "C" {
         const int BLOCK_SIZE = 256;
         const int GRID_SIZE = (BATCH_SIZE + BLOCK_SIZE - 1) / BLOCK_SIZE;
         
+        // 调试信息
+        printf("\n=== C++ CUDA Generator Start ===\n");
+        printf("Target pattern: T%s...%s\n", prefix, suffix);
+        printf("Pattern length: %d chars (prefix=%d, suffix=%d)\n", 
+               (int)(strlen(prefix) + strlen(suffix)), 
+               (int)strlen(prefix), (int)strlen(suffix));
+        if (max_attempts <= 0) {
+            printf("Max attempts: unlimited\n");
+        } else {
+            printf("Max attempts: %d\n", max_attempts);
+        }
+        printf("Batch size: %d\n", BATCH_SIZE);
+        
+        // 计算难度
+        int pattern_len = strlen(prefix) + strlen(suffix);
+        double difficulty = pow(58.0, pattern_len);
+        printf("Difficulty: 1 in %.0f\n", difficulty);
+        printf("Expected time: %.1f seconds @ 10M/s\n", difficulty / 10000000.0);
+        
         // 分配GPU内存
         char *d_addresses, *d_prefix, *d_suffix;
         uint256_t *d_private_keys;
@@ -717,15 +1014,17 @@ extern "C" {
         bool found = false;
         
         // 初始化随机数生成器
-        srand(time(NULL));
+        srand(time(NULL) + (uint32_t)(uintptr_t)out_address);
         
         // 生成循环
-        while (total_attempts < max_attempts && !found) {
-            // 生成种子 - 使用更好的随机性
-            uint64_t seed = ((uint64_t)time(NULL) << 32) | 
-                           ((uint64_t)rand() << 16) | 
-                           (rand() & 0xFFFF) |
-                           (total_attempts & 0xFFFFFFFF);
+        while (((max_attempts <= 0) || (total_attempts < max_attempts)) && !found) {
+            // 生成随机种子
+            uint64_t seed = 0;
+            for (int i = 0; i < 4; i++) {
+                seed = (seed << 16) | (rand() & 0xFFFF);
+            }
+            seed ^= ((uint64_t)time(NULL) << 20);
+            seed ^= (total_attempts * 0x5DEECE66DULL);
             
             // 启动内核
             generate_batch<<<GRID_SIZE, BLOCK_SIZE>>>(
@@ -740,18 +1039,44 @@ extern "C" {
             cudaMemcpy(h_matches, d_matches, BATCH_SIZE * sizeof(bool), cudaMemcpyDeviceToHost);
             
             // 检查匹配
+            int match_count = 0;
+            for (int i = 0; i < BATCH_SIZE; i++) {
+                if (h_matches[i]) match_count++;
+            }
+            
+            if (match_count > 0) {
+                printf("\nBatch %d: Found %d matches! (seed=%llx)\n", 
+                       total_attempts / BATCH_SIZE, match_count, (unsigned long long)seed);
+                
+                // 复制所有地址以调试
+                cudaMemcpy(h_addresses, d_addresses, BATCH_SIZE * 35, cudaMemcpyDeviceToHost);
+                cudaMemcpy(h_private_keys, d_private_keys, BATCH_SIZE * sizeof(uint256_t), cudaMemcpyDeviceToHost);
+                
+                // 检查前几个地址
+                for (int i = 0; i < min(5, BATCH_SIZE); i++) {
+                    char* addr = h_addresses + i * 35;
+                    bool valid_format = (addr[0] == 'T' && strlen(addr) == 34);
+                    printf("  Address[%d]: %s (valid=%d, match=%d)\n", 
+                           i, addr, valid_format, h_matches[i]);
+                }
+            }
+            
             for (int i = 0; i < BATCH_SIZE && !found; i++) {
                 if (h_matches[i]) {
-                    // 找到匹配，复制结果
-                    cudaMemcpy(h_addresses, d_addresses, BATCH_SIZE * 35, cudaMemcpyDeviceToHost);
-                    cudaMemcpy(h_private_keys, d_private_keys, BATCH_SIZE * sizeof(uint256_t), cudaMemcpyDeviceToHost);
-                    
-                    strcpy(out_address, h_addresses + i * 35);
+                    // 复制找到的地址
+                    memcpy(out_address, h_addresses + i * 35, 35);
+                    out_address[34] = '\0';  // 确保字符串结尾
                     
                     // 转换私钥为十六进制
                     for (int j = 0; j < 4; j++) {
                         sprintf(out_private_key + j * 16, "%016llx", (unsigned long long)h_private_keys[i].data[3-j]);
                     }
+                    out_private_key[64] = '\0';
+                    
+                    printf("\nSelected address: %s\n", out_address);
+                    printf("Match check: prefix='%.*s', suffix='%s'\n", 
+                           (int)strlen(prefix), out_address + 1, 
+                           out_address + strlen(out_address) - strlen(suffix));
                     
                     found = true;
                     break;
@@ -766,6 +1091,14 @@ extern "C" {
             }
         }
         
+        // 在释放前，处理“没找到”的回退地址
+        bool need_debug_return = (!found && total_attempts > 0);
+        char last_addr[35];
+        if (need_debug_return) {
+            // 直接从设备拷回第0个地址
+            cudaMemcpy(last_addr, d_addresses, 35, cudaMemcpyDeviceToHost);
+        }
+
         // 清理
         cudaFree(d_addresses);
         cudaFree(d_private_keys);
@@ -773,9 +1106,18 @@ extern "C" {
         cudaFree(d_prefix);
         cudaFree(d_suffix);
         
+        // 在释放host缓冲前确保不再访问
+        if (need_debug_return) {
+            memcpy(out_address, last_addr, 35);
+            out_address[34] = '\0';
+            printf("Debug: Returning last generated address: %s\n", out_address);
+        }
+
         delete[] h_addresses;
         delete[] h_private_keys;
         delete[] h_matches;
+        
+        printf("\nGeneration complete: found=%d, total_attempts=%d\n", found, total_attempts);
         
         return found ? total_attempts : -1;
     }

@@ -46,7 +46,9 @@ tasks = {}
 class GenerateRequest(BaseModel):
     """生成请求模型"""
     address: str
-    timeout: Optional[float] = 0  # 默认无限制，生成到找到为止
+    # timeout 移除：接口改为一直跑到找到为止
+    # 保留字段但弃用（兼容旧客户端），0/缺省等同不限时
+    timeout: Optional[float] = 0
     use_gpu: Optional[bool] = True
     callback_url: Optional[str] = None
 
@@ -106,7 +108,7 @@ async def generate_address(request: GenerateRequest):
         result = await generate_similar_address(
             request.address,
             use_gpu=request.use_gpu and GPU_AVAILABLE,
-            timeout=request.timeout
+            timeout=0
         )
         
         if result["success"]:
@@ -175,7 +177,7 @@ async def process_generation_task(task_id: str, request: GenerateRequest):
         result = await generate_similar_address(
             request.address,
             use_gpu=request.use_gpu and GPU_AVAILABLE,
-            timeout=request.timeout or 30.0  # 异步任务允许更长时间
+            timeout=0
         )
         
         # 更新结果
@@ -253,7 +255,7 @@ async def benchmark():
             cpu_result = await generate_similar_address(
                 address,
                 use_gpu=False,
-                timeout=0.1  # 短时间测试
+                timeout=0  # 不限时（基准逻辑可另行实现）
             )
             cpu_speed = cpu_result.get("attempts", 0) / 0.1
             
@@ -263,7 +265,7 @@ async def benchmark():
                 gpu_result = await generate_similar_address(
                     address,
                     use_gpu=True,
-                    timeout=0.1
+                    timeout=0
                 )
                 gpu_speed = gpu_result.get("attempts", 0) / 0.1
             

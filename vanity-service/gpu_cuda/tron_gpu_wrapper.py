@@ -3,6 +3,9 @@ Python包装器 - 调用C++ CUDA生成器
 """
 import ctypes
 import os
+import hashlib
+import base58
+import sys
 from typing import Optional, Dict
 
 
@@ -31,12 +34,13 @@ class TronGPUGenerator:
         # 定义函数接口
         self.lib.cuda_init.restype = ctypes.c_int
         
+        from ctypes import c_int, c_char_p, c_char, POINTER
         self.lib.generate_addresses_gpu.argtypes = [
-            ctypes.c_char_p,  # prefix
-            ctypes.c_char_p,  # suffix
-            ctypes.c_char_p,  # out_address
-            ctypes.c_char_p,  # out_private_key
-            ctypes.c_int      # max_attempts
+            c_char_p,           # prefix
+            c_char_p,           # suffix
+            POINTER(c_char),    # out_address
+            POINTER(c_char),    # out_private_key
+            c_int               # max_attempts
         ]
         self.lib.generate_addresses_gpu.restype = ctypes.c_int
         
@@ -46,29 +50,46 @@ class TronGPUGenerator:
         
         print("✅ C++ CUDA生成器初始化成功")
     
-    async def generate(self, pattern: str, timeout: float = 60.0) -> Optional[Dict]:
+    async def generate(self, pattern: str, timeout: float = 0.0) -> Optional[Dict]:
         """生成匹配模式的地址"""
-        # 解析模式
-        if '...' in pattern:
-            parts = pattern.split('...')
+        # 解析：支持两种输入 + 轻量校验（Base58字符 + 总长约束）
+        # 1) 完整TRON地址: 提取第2-3位和最后3位
+        # 2) 形如 "XX...YYY" 的模式: 直接使用
+        raw = pattern.strip()
+        prefix = ""
+        suffix = ""
+        if '...' in raw:
+            parts = raw.split('...')
             prefix = parts[0]
             suffix = parts[1] if len(parts) > 1 else ""
+        elif raw.startswith('T') and len(raw) == 34:
+            prefix = raw[1:3]
+            suffix = raw[-3:]
         else:
-            prefix = pattern
+            # 仅前缀
+            prefix = raw
             suffix = ""
-        
-        # TRON地址都以'T'开头，不需要匹配
-        # 去掉前缀中的'T'
-        if prefix.startswith('T'):
-            prefix = prefix[1:]
-            print(f"   实际匹配: {prefix}...{suffix} (去掉了固定的'T')")
+        # 校验允许字符与总长度（T + 33）
+        b58chars = set("123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz")
+        if any(c not in b58chars for c in prefix+suffix):
+            print("⚠️ 非法字符：仅允许Base58字符集")
+            return None
+        if len(prefix) + len(suffix) > 33:
+            print("⚠️ 模式过长：prefix+suffix 之和不能超过33")
+            return None
         
         # 准备输出缓冲区
         address_buffer = ctypes.create_string_buffer(35)
         private_key_buffer = ctypes.create_string_buffer(65)
         
+        # 调试：初始化缓冲区
+        address_buffer.value = b'\0' * 34
+        private_key_buffer.value = b'\0' * 64
+        
         # 计算最大尝试次数（基于超时）
-        max_attempts = int(timeout * 10_000_000)  # 假设1000万/秒
+        # 限制在int32范围内，避免溢出
+        # timeout<=0 表示不限次
+        max_attempts = 0 if timeout <= 0 else min(int(timeout * 10_000_000), 2_000_000_000)
         
         print(f"🚀 C++ CUDA生成开始")
         print(f"   原始模式: {pattern}")
@@ -79,7 +100,9 @@ class TronGPUGenerator:
         import time
         start_time = time.time()
         
-        result = self.lib.generate_addresses_gpu(
+        import asyncio
+        result = await asyncio.to_thread(
+            self.lib.generate_addresses_gpu,
             prefix.encode(),
             suffix.encode(),
             address_buffer,
@@ -89,29 +112,101 @@ class TronGPUGenerator:
         
         elapsed = time.time() - start_time
         
+        print(f"\n📊 C++ 返回值: {result}")
+        print(f"   Buffer长度: addr={len(address_buffer.raw.rstrip(b'\0'))}, key={len(private_key_buffer.raw.rstrip(b'\0'))}")
+        
         if result > 0:
-            address = address_buffer.value.decode()
-            private_key = private_key_buffer.value.decode()
+            address = address_buffer.value.decode().rstrip('\0')
+            private_key = private_key_buffer.value.decode().rstrip('\0')
             speed = result / elapsed
             
-            print(f"\n✅ C++ CUDA找到匹配!")
-            print(f"   地址: {address}")
-            print(f"   私钥: {private_key[:32]}...")
-            print(f"   尝试: {result:,}")
-            print(f"   耗时: {elapsed:.3f}秒")
-            print(f"   速度: {speed:,.0f}/秒")
+            print(f"\n🔍 调试信息:")
+            print(f"   原始模式: {pattern}")
+            print(f"   Buffer内容 (前20字节): {address_buffer.raw[:20]}")
+            print(f"   解码地址: '{address}'")
+            print(f"   地址长度: {len(address)}")
             
-            return {
-                'address': address,
-                'private_key': private_key,
-                'type': 'TRON',
-                'attempts': result,
-                'time': elapsed,
-                'speed': speed,
-                'backend': 'C++ CUDA (RTX 5070 Ti)'
-            }
+            # 校验Base58Check与模式
+            def valid_tron(addr: str) -> bool:
+                try:
+                    raw25 = base58.b58decode(addr)
+                except Exception:
+                    return False
+                if len(raw25) != 25 or raw25[0] != 0x41:
+                    return False
+                chk = hashlib.sha256(hashlib.sha256(raw25[:21]).digest()).digest()[:4]
+                return raw25[21:] == chk
+
+            def match(addr: str) -> bool:
+                ok = True
+                if prefix:
+                    ok = ok and addr[1:].startswith(prefix)
+                if suffix:
+                    ok = ok and addr.endswith(suffix)
+                return ok
+
+            if valid_tron(address) and match(address):
+                print(f"\n✅ C++ CUDA找到匹配!")
+                print(f"   地址: {address}")
+                print(f"   私钥: {private_key[:32]}...")
+                print(f"   尝试: {result:,}")
+                print(f"   耗时: {elapsed:.3f}秒")
+                print(f"   速度: {speed:,.0f}/秒")
+                return {
+                    'address': address,
+                    'private_key': private_key,
+                    'type': 'TRON',
+                    'attempts': result,
+                    'time': elapsed,
+                    'speed': speed,
+                    'backend': 'C++ CUDA (RTX 5070 Ti)'
+                }
+            else:
+                print("⚠️ GPU返回地址校验失败或不匹配模式，回退CPU…")
+                # CPU fallback
+                try:
+                    cpu_mod_path = os.path.join(os.path.dirname(__file__), '..', 'app', 'generators')
+                    sys.path.append(cpu_mod_path)
+                    from tron_generator_fixed import generate_real_tron_vanity
+                    # 构造目标地址
+                    target = raw if (raw.startswith('T') and len(raw) == 34) else (
+                        'T' + prefix + ('X' * max(0, 34 - 1 - len(prefix) - len(suffix))) + suffix
+                    )
+                    cpu_result = generate_real_tron_vanity(target, timeout=timeout)
+                    if cpu_result and cpu_result.get('found'):
+                        return {
+                            'address': cpu_result['address'],
+                            'private_key': cpu_result['private_key'],
+                            'type': 'TRON',
+                            'attempts': cpu_result.get('attempts', 0),
+                            'time': cpu_result.get('time', elapsed),
+                            'backend': 'CPU fallback'
+                        }
+                except Exception as _e:
+                    print(f"CPU回退失败: {_e}")
+                return None
         else:
             print(f"\n❌ 未找到匹配 (尝试了{max_attempts:,}次)")
+            # CPU fallback
+            try:
+                cpu_mod_path = os.path.join(os.path.dirname(__file__), '..', 'app', 'generators')
+                sys.path.append(cpu_mod_path)
+                from tron_generator_fixed import generate_real_tron_vanity
+                target = raw if (raw.startswith('T') and len(raw) == 34) else (
+                    'T' + prefix + ('X' * max(0, 34 - 1 - len(prefix) - len(suffix))) + suffix
+                )
+                cpu_result = generate_real_tron_vanity(target, timeout=timeout)
+                if cpu_result and cpu_result.get('found'):
+                    return {
+                        'address': cpu_result['address'],
+                        'private_key': cpu_result['private_key'],
+                        'type': 'TRON',
+                        'attempts': cpu_result.get('attempts', 0),
+                        'time': cpu_result.get('time', 0.0),
+                        'backend': 'CPU fallback'
+                    }
+            except Exception as _e:
+                print(f"CPU回退失败: {_e}")
             return None
 
 
