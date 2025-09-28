@@ -639,7 +639,7 @@ __device__ void keccak256(uint8_t* output, const uint8_t* input, size_t len) {
         input += toAbsorb;
         len -= toAbsorb;
         if (blockSize == rate) {
-            keccak_f_ref(state);
+            keccak_f(state);
             blockSize = 0;
         }
     }
@@ -647,7 +647,7 @@ __device__ void keccak256(uint8_t* output, const uint8_t* input, size_t len) {
     // 填充
     ((uint8_t*)state)[blockSize] ^= 0x01;
     ((uint8_t*)state)[rate - 1] ^= 0x80;
-    keccak_f_ref(state);
+    keccak_f(state);
     
     // 挤压阶段 - 输出32字节（按小端顺序读出）
     memcpy(output, (uint8_t*)state, 32);
