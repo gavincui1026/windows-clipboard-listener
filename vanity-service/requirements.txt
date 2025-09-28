@@ -5,19 +5,24 @@ pydantic==2.10.4
 
 # 异步支持
 aiohttp==3.9.1
-asyncio==3.4.3
+# ⚠️ 不要安装 PyPI 的 asyncio 包（Python 3 自带），会与标准库冲突
+# asyncio==3.4.3  ← 删除这一行
 
 # 加密货币地址生成
-ecdsa==0.19.0          # TRON/BTC椭圆曲线
-base58==2.1.1          # Base58编码
-eth-account==0.13.4    # ETH/BNB地址生成
-pycryptodome==3.20.0   # 通用加密算法（包含Keccak256）
+ecdsa==0.19.0          # TRON/BTC 椭圆曲线
+base58==2.1.1          # Base58 编码
+eth-account==0.13.4    # ETH/BNB 地址生成
+pycryptodome==3.20.0   # 提供 Keccak-256（Crypto.Hash.keccak）
 
-# 性能优化
-coincurve==20.0.0      # 更快的secp256k1（可选）
+# 可选：Keccak 备用实现（若不用 pycryptodome，可二选一装）
+# eth-hash[pycryptodome]==0.7.1
+# pysha3==1.0.5
+
+# 性能优化（可选）
+coincurve==20.0.0      # 更快的 secp256k1（需要系统安装 libsecp256k1）
 
 # GPU支持（可选）
-# pycuda==2024.1        # CUDA支持（需要NVIDIA驱动）
+# pycuda==2024.1        # 需要已安装 NVIDIA 驱动/CUDA Toolkit
 
 # 工具
 python-multipart==0.0.20
