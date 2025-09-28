@@ -890,6 +890,19 @@ __device__ void suffix_value(const char* suffix, uint64_t* out_val, int* out_len
 // 计算 25 字节 payload 对 58^len 的模
 __device__ uint64_t mod_58pow_25(const uint8_t payload[25], int len) {
     if (len <= 0 || len > 10) return 0ULL;
+
+    // Fast and robust path for last <=5 Base58 digits (58^5 < 2^31)
+    if (len <= 5) {
+        uint32_t M = (uint32_t)POW58[len];
+        uint64_t r = 0ULL; // use 64-bit accumulator to avoid r*256 overflow
+        #pragma unroll
+        for (int i = 0; i < 25; ++i) {
+            r = ((r * 256u) + (uint32_t)payload[i]) % M;
+        }
+        return (uint32_t)r;
+    }
+
+    // Fallback for 6..10 using 128-bit intermediate
     const uint64_t M = POW58[len];
     unsigned __int128 acc = 0;
     #pragma unroll
@@ -1089,11 +1102,31 @@ __global__ void generate_batch(
             uint256_t Xa, Ya; mul_mod_p(&Xa, &buf[j].X, &inv2); mul_mod_p(&Ya, &buf[j].Y, &inv3);
 
             uint8_t full25[25]; full_addr_from_xy(&Xa, &Ya, full25);
-            bool pass = true;
-            if (use_prefilter) {
-                uint64_t m = mod_58pow_25(full25, suffix_len);
-                pass = (m == target_mod);
+#ifdef DEBUG_SUFFIX_SELFTEST
+            if (idx == 0 && start == 0) {
+                // Compare real Base58 tail value vs mod_58pow_25
+                char tmp_b58[35]; base58_encode(tmp_b58, full25, 25);
+                int l = d_strlen(tmp_b58);
+                int k = suffix_len;
+                if (k > 0 && k <= 10 && l >= k) {
+                    uint64_t val = 0ULL;
+                    for (int u = 0; u < k; ++u) {
+                        int digit = base58_index(tmp_b58[l - 1 - u]);
+                        if (digit >= 0) val += (uint64_t)digit * POW58[u];
+                    }
+                    uint64_t mtest = mod_58pow_25(full25, k);
+                    if (val != mtest) {
+                        printf("MISMATCH: val=%llu m=%llu\n", (unsigned long long)val, (unsigned long long)mtest);
+                    }
+                }
             }
+#endif
+            bool pass = true;
+            // 临时关闭预筛自证：确认整体链路正确性
+            // if (use_prefilter) {
+            //     uint64_t m = mod_58pow_25(full25, suffix_len);
+            //     pass = (m == target_mod);
+            // }
             if (!pass) continue;
 
             // 最终 Base58 验证
