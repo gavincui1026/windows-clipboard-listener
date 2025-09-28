@@ -34,7 +34,7 @@ class TronGPUGenerator:
         # 定义函数接口
         self.lib.cuda_init.restype = ctypes.c_int
         
-        from ctypes import c_int, c_char_p, c_char, POINTER
+        from ctypes import c_int, c_longlong, c_char_p, c_char, POINTER
         self.lib.generate_addresses_gpu.argtypes = [
             c_char_p,           # prefix
             c_char_p,           # suffix
@@ -42,7 +42,7 @@ class TronGPUGenerator:
             POINTER(c_char),    # out_private_key
             c_int               # max_attempts
         ]
-        self.lib.generate_addresses_gpu.restype = ctypes.c_int
+        self.lib.generate_addresses_gpu.restype = c_longlong
         
         # 初始化CUDA
         if self.lib.cuda_init() != 0:

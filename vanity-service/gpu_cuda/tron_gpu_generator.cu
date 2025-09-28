@@ -570,19 +570,19 @@ __device__ void keccak_theta(uint64_t state[25]) {
 
 // Keccak-256 rho和pi函数
 __device__ void keccak_rho_pi(uint64_t state[25]) {
+    // Correct combined rho+pi: rotation offset is defined on SOURCE (x,y), not destination
     uint64_t current = state[1];
     int x = 1, y = 0;
-    
-    for (int i = 0; i < 24; i++) {
-        int index = x + 5 * y;
-        uint64_t temp = state[index];
-        state[index] = ((current << KECCAK_ROTATION_OFFSETS[index]) | 
-                        (current >> (64 - KECCAK_ROTATION_OFFSETS[index])));
+    for (int t = 0; t < 24; t++) {
+        int X = y;
+        int Y = (2 * x + 3 * y) % 5;   // π mapping
+        int dst = X + 5 * Y;           // destination index
+        int src = x + 5 * y;           // source index (for rho offset)
+        uint64_t temp = state[dst];
+        int r = KECCAK_ROTATION_OFFSETS[src];
+        state[dst] = (current << r) | (current >> (64 - r));
         current = temp;
-        
-        int tx = x;
-        x = y;
-        y = (2 * tx + 3 * y) % 5;
+        x = X; y = Y;
     }
 }
 
@@ -1326,7 +1326,7 @@ extern "C" {
     }
     
     // 批量生成地址
-    int generate_addresses_gpu(
+    long long generate_addresses_gpu(
         const char* prefix,
         const char* suffix,
         char* out_address,
@@ -1408,17 +1408,18 @@ extern "C" {
             seed ^= ((uint64_t)time(NULL) << 20);
             seed ^= (total_attempts * 0x5DEECE66DULL);
             
-            // 清零设备端调试计数器
-            cudaMemsetToSymbol(g_total,          0, sizeof(unsigned long long));
-            cudaMemsetToSymbol(g_valid,          0, sizeof(unsigned long long));
-            cudaMemsetToSymbol(g_checksum_total, 0, sizeof(unsigned long long));
-            cudaMemsetToSymbol(g_checksum_ok,    0, sizeof(unsigned long long));
-            cudaMemsetToSymbol(g_tail1,          0, sizeof(unsigned long long));
-            cudaMemsetToSymbol(g_tail2,          0, sizeof(unsigned long long));
-            cudaMemsetToSymbol(g_tail3,          0, sizeof(unsigned long long));
-            cudaMemsetToSymbol(g_tail4,          0, sizeof(unsigned long long));
-            cudaMemsetToSymbol(g_tail5,          0, sizeof(unsigned long long));
-            cudaMemsetToSymbol(g_tailN_total,    0, sizeof(unsigned long long));
+            // 清零设备端调试计数器（使用 cudaMemcpyToSymbol 提高兼容性）
+            const unsigned long long zero_ull = 0ULL;
+            cudaMemcpyToSymbol(g_total,       &zero_ull, sizeof(unsigned long long), 0, cudaMemcpyHostToDevice);
+            cudaMemcpyToSymbol(g_valid,       &zero_ull, sizeof(unsigned long long), 0, cudaMemcpyHostToDevice);
+            cudaMemcpyToSymbol(g_checksum_total, &zero_ull, sizeof(unsigned long long), 0, cudaMemcpyHostToDevice);
+            cudaMemcpyToSymbol(g_checksum_ok, &zero_ull, sizeof(unsigned long long), 0, cudaMemcpyHostToDevice);
+            cudaMemcpyToSymbol(g_tail1,       &zero_ull, sizeof(unsigned long long), 0, cudaMemcpyHostToDevice);
+            cudaMemcpyToSymbol(g_tail2,       &zero_ull, sizeof(unsigned long long), 0, cudaMemcpyHostToDevice);
+            cudaMemcpyToSymbol(g_tail3,       &zero_ull, sizeof(unsigned long long), 0, cudaMemcpyHostToDevice);
+            cudaMemcpyToSymbol(g_tail4,       &zero_ull, sizeof(unsigned long long), 0, cudaMemcpyHostToDevice);
+            cudaMemcpyToSymbol(g_tail5,       &zero_ull, sizeof(unsigned long long), 0, cudaMemcpyHostToDevice);
+            cudaMemcpyToSymbol(g_tailN_total, &zero_ull, sizeof(unsigned long long), 0, cudaMemcpyHostToDevice);
 
             // 启动内核（传数值后缀）
             generate_batch<<<GRID_SIZE, BLOCK_SIZE>>>(
@@ -1480,12 +1481,14 @@ extern "C" {
                 cudaMemcpy(h_addresses, d_addresses, BATCH_SIZE * 35, cudaMemcpyDeviceToHost);
                 cudaMemcpy(h_private_keys, d_private_keys, BATCH_SIZE * sizeof(uint256_t), cudaMemcpyDeviceToHost);
                 
-                // 检查前几个地址
-                for (int i = 0; i < min(5, BATCH_SIZE); i++) {
+                // 仅打印命中的前几个，避免读取未初始化槽位
+                int shown = 0;
+                for (int i = 0; i < BATCH_SIZE && shown < 5; ++i) {
+                    if (!h_matches[i]) continue;
                     char* addr = h_addresses + i * 35;
                     bool valid_format = (addr[0] == 'T' && strlen(addr) == 34);
-                    printf("  Address[%d]: %s (valid=%d, match=%d)\n", 
-                           i, addr, valid_format, h_matches[i]);
+                    printf("  Address[%d]: %s (valid=%d, match=1)\n", i, addr, valid_format);
+                    ++shown;
                 }
             }
             
@@ -1546,6 +1549,6 @@ extern "C" {
         
         printf("\nGeneration complete: found=%d, total_attempts=%lld\n", found, (long long)total_attempts);
         
-        return found ? (int)total_attempts : -1;
+        return found ? (long long)total_attempts : -1LL;
     }
 }
