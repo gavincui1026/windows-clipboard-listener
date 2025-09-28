@@ -46,9 +46,9 @@ def detect_address_type(address: str) -> Optional[str]:
 def get_pattern_from_address(address: str, address_type: str) -> Tuple[str, str]:
     """从地址提取前2后3模式"""
     if address_type == 'TRON':
-        # TRON地址T开头，提取第2-3位和最后3位
-        prefix = address[1:3] if len(address) > 2 else ""
-        suffix = address[-3:] if len(address) >= 3 else ""
+        # 规则调整：仅匹配后5位（T固定，不使用前缀）
+        prefix = ""
+        suffix = address[-5:] if len(address) >= 5 else address[1:]
         return prefix, suffix
     
     elif address_type in ['BTC_P2PKH', 'BTC_P2SH', 'BTC_Bech32']:
@@ -178,8 +178,8 @@ async def generate_similar_address(
 def estimate_difficulty(address_type: str, pattern_length: int = 5) -> int:
     """估算生成难度"""
     if address_type == 'TRON':
-        # Base58字符集大小为58，匹配4位（T是固定的）
-        return 58 ** 4
+        # 调整为匹配后5位（T固定）
+        return 58 ** 5
     elif address_type in ['ETH', 'BNB']:
         # 十六进制，匹配5位
         return 16 ** 5

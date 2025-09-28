@@ -817,29 +817,14 @@ __device__ void generate_tron_address(const uint256_t* private_key, char* addres
 
 // 模式匹配
 __device__ bool match_pattern(const char* address, const char* prefix, const char* suffix) {
-    // 首先验证地址格式
-    if (address[0] != 'T' || d_strlen(address) != 34) {
-        return false;
+    // 新规则：仅匹配后缀（后N位），忽略前缀
+    if (address[0] != 'T' || d_strlen(address) != 34) return false;
+    if (suffix[0] == '\0') return true;
+    int addr_len = d_strlen(address);
+    int suffix_len = d_strlen(suffix);
+    for (int i = 0; i < suffix_len; i++) {
+        if (address[addr_len - suffix_len + i] != suffix[i]) return false;
     }
-    // TRON地址都以'T'开头，跳过第一个字符
-    // 从索引1开始匹配前缀
-    int prefix_len = 0;
-    while (prefix[prefix_len] != '\0') {
-        if (address[prefix_len + 1] != prefix[prefix_len]) {  // +1 跳过'T'
-            return false;
-        }
-        prefix_len++;
-    }
-    
-    // 匹配后缀
-    if (suffix[0] != '\0') {
-        int addr_len = d_strlen(address);
-        int suffix_len = d_strlen(suffix);
-        for (int i = 0; i < suffix_len; i++) {
-            if (address[addr_len - suffix_len + i] != suffix[i]) return false;
-        }
-    }
-    
     return true;
 }
 

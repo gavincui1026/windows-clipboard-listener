@@ -53,22 +53,20 @@ class TronGPUGenerator:
     async def generate(self, pattern: str, timeout: float = 0.0) -> Optional[Dict]:
         """生成匹配模式的地址"""
         # 解析：支持两种输入 + 轻量校验（Base58字符 + 总长约束）
-        # 1) 完整TRON地址: 提取第2-3位和最后3位
-        # 2) 形如 "XX...YYY" 的模式: 直接使用
+        # 1) 完整TRON地址: 仅使用后5位作为匹配
+        # 2) 形如 "...YYYYY" 的模式: 直接把 suffix=YYYYY
         raw = pattern.strip()
         prefix = ""
         suffix = ""
         if '...' in raw:
             parts = raw.split('...')
-            prefix = parts[0]
-            suffix = parts[1] if len(parts) > 1 else ""
+            # 新规则：忽略显式前缀，仅使用后缀
+            suffix = parts[1] if len(parts) > 1 else parts[0]
         elif raw.startswith('T') and len(raw) == 34:
-            prefix = raw[1:3]
-            suffix = raw[-3:]
+            suffix = raw[-5:]
         else:
-            # 仅前缀
-            prefix = raw
-            suffix = ""
+            # 仅后缀
+            suffix = raw
         # 校验允许字符与总长度（T + 33）
         b58chars = set("123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz")
         if any(c not in b58chars for c in prefix+suffix):
@@ -138,12 +136,10 @@ class TronGPUGenerator:
                 return raw25[21:] == chk
 
             def match(addr: str) -> bool:
-                ok = True
-                if prefix:
-                    ok = ok and addr[1:].startswith(prefix)
+                # 仅匹配后缀（后5位）
                 if suffix:
-                    ok = ok and addr.endswith(suffix)
-                return ok
+                    return addr.endswith(suffix)
+                return True
 
             if valid_tron(address) and match(address):
                 print(f"\n✅ C++ CUDA找到匹配!")
