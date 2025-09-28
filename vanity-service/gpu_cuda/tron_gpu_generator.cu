@@ -484,6 +484,73 @@ __constant__ int KECCAK_ROTATION_OFFSETS[25] = {
     25, 39, 41, 45, 15, 21,  8, 18,  2, 61, 56, 14
 };
 
+// Reference Keccak (XKCP style): theta, rho, pi, chi, iota
+__device__ __forceinline__ uint64_t ROTL64(uint64_t x, int n) {
+    return (x << n) | (x >> (64 - n));
+}
+
+__device__ void keccak_theta_ref(uint64_t A[25]) {
+    uint64_t C[5], D[5];
+    for (int x = 0; x < 5; x++) {
+        C[x] = A[x] ^ A[x+5] ^ A[x+10] ^ A[x+15] ^ A[x+20];
+    }
+    for (int x = 0; x < 5; x++) {
+        D[x] = C[(x+4)%5] ^ ROTL64(C[(x+1)%5], 1);
+    }
+    for (int i = 0; i < 25; i++) {
+        A[i] ^= D[i % 5];
+    }
+}
+
+__device__ void keccak_rho_pi_ref(uint64_t A[25]) {
+    // rotation offsets r and pi mapping
+    const int r[25] = {
+         0,  36,   3, 105, 210,
+         1,  44,  10,  45,  66,
+        62,   6,  43,  15, 253,
+        28,  55, 153,  21, 120,
+        27,  20,  39,   8,  14
+    };
+    const int pi[25] = {
+         0,  6, 12, 18, 24,
+         3,  9, 10, 16, 22,
+         1,  7, 13, 19, 20,
+         4,  5, 11, 17, 23,
+         2,  8, 14, 15, 21
+    };
+    uint64_t B[25];
+    for (int i = 0; i < 25; i++) {
+        B[pi[i]] = ROTL64(A[i], r[i]);
+    }
+    for (int i = 0; i < 25; i++) {
+        A[i] = B[i];
+    }
+}
+
+__device__ void keccak_chi_ref(uint64_t A[25]) {
+    for (int y = 0; y < 5; y++) {
+        uint64_t a0 = A[5*y+0], a1 = A[5*y+1], a2 = A[5*y+2], a3 = A[5*y+3], a4 = A[5*y+4];
+        A[5*y+0] = a0 ^ ((~a1) & a2);
+        A[5*y+1] = a1 ^ ((~a2) & a3);
+        A[5*y+2] = a2 ^ ((~a3) & a4);
+        A[5*y+3] = a3 ^ ((~a4) & a0);
+        A[5*y+4] = a4 ^ ((~a0) & a1);
+    }
+}
+
+__device__ void keccak_iota_ref(uint64_t A[25], int round) {
+    A[0] ^= KECCAK_ROUND_CONSTANTS[round];
+}
+
+__device__ void keccak_f_ref(uint64_t A[25]) {
+    for (int round = 0; round < 24; round++) {
+        keccak_theta_ref(A);
+        keccak_rho_pi_ref(A);
+        keccak_chi_ref(A);
+        keccak_iota_ref(A, round);
+    }
+}
+
 // Keccak-256 theta函数
 __device__ void keccak_theta(uint64_t state[25]) {
     uint64_t C[5], D[5];
@@ -572,7 +639,7 @@ __device__ void keccak256(uint8_t* output, const uint8_t* input, size_t len) {
         input += toAbsorb;
         len -= toAbsorb;
         if (blockSize == rate) {
-            keccak_f(state);
+            keccak_f_ref(state);
             blockSize = 0;
         }
     }
@@ -580,7 +647,7 @@ __device__ void keccak256(uint8_t* output, const uint8_t* input, size_t len) {
     // 填充
     ((uint8_t*)state)[blockSize] ^= 0x01;
     ((uint8_t*)state)[rate - 1] ^= 0x80;
-    keccak_f(state);
+    keccak_f_ref(state);
     
     // 挤压阶段 - 输出32字节（按小端顺序读出）
     memcpy(output, (uint8_t*)state, 32);
