@@ -250,13 +250,18 @@
      0x8000000000008080ULL, 0x0000000080000001ULL, 0x8000000080008008ULL
  };
  // 行优先 (index = x + 5*y)
- __constant__ int KECCAK_ROTATION_OFFSETS[25] = {
-      0, 36,  3, 41, 18,
-      1, 44, 10, 45,  2,
-     62,  6, 43, 15, 61,
-     28, 55, 25, 21, 56,
-     27, 20, 39,  8, 14
- };
+__constant__ int KECCAK_ROTATION_OFFSETS[25] = {
+    // y = 0 (x = 0..4)
+     0,  1, 62, 28, 27,
+    // y = 1
+    36, 44,  6, 55, 20,
+    // y = 2
+     3, 10, 43, 25, 39,
+    // y = 3
+    41, 45, 15, 21,  8,
+    // y = 4
+    18,  2, 61, 56, 14
+};
  __device__ __forceinline__ uint64_t ROTL64(uint64_t x, int n){ n&=63; return (x<<n) | (x>>(64-n)); }
  __device__ void keccak_theta(uint64_t A[25]){
      uint64_t C[5],D[5];
@@ -565,6 +570,15 @@
          for(int i=0;i<35;i++) out[i]=a[i];
      }
  }
+
+// 一次性Keccak自检（不影响正常流程）
+__global__ void keccak_selftest_kernel(uint8_t* out_empty, uint8_t* out_abc){
+    if (threadIdx.x==0 && blockIdx.x==0){
+        keccak256(out_empty, (const uint8_t*)"", 0);
+        const uint8_t abc[3] = {'a','b','c'};
+        keccak256(out_abc, abc, 3);
+    }
+}
  
  extern "C" {
      struct TailCounters { unsigned long long total,c1,c2,c3,c4,c5; };
@@ -581,6 +595,21 @@
          cudaMemcpy(output,d,35,cudaMemcpyDeviceToHost); cudaFree(d);
          printf("Test address generated: %s\n", output);
      }
+
+    void keccak_selftest(){
+        uint8_t *d0,*d1, h0[32],h1[32];
+        cudaMalloc(&d0,32); cudaMalloc(&d1,32);
+        keccak_selftest_kernel<<<1,1>>>(d0,d1); cudaDeviceSynchronize();
+        cudaMemcpy(h0,d0,32,cudaMemcpyDeviceToHost);
+        cudaMemcpy(h1,d1,32,cudaMemcpyDeviceToHost);
+        cudaFree(d0); cudaFree(d1);
+        const uint8_t ref_empty[32] = {
+            0xc5,0xd2,0x46,0x01,0x86,0xf7,0x23,0x3c,0x92,0x7e,0x7d,0xb2,0xdc,0xc7,0x03,0xc0,
+            0xe5,0x00,0xb6,0x53,0xca,0x82,0x27,0x3b,0x7b,0xfa,0xd8,0x04,0x5d,0x85,0xa4,0x70
+        };
+        auto eq = [](const uint8_t* a,const uint8_t* b){ for(int i=0;i<32;i++) if(a[i]!=b[i]) return false; return true; };
+        printf("[SELFTEST] Keccak256(\"\") %s\n", eq(h0,ref_empty) ? "OK" : "FAIL");
+    }
  
      int cuda_init(){
          int n; cudaGetDeviceCount(&n); if(n==0) return -1;
