@@ -49,6 +49,20 @@ __constant__ uint64_t SECP256K1_GY[4] = {
 
 // Base58字符集
 __constant__ char BASE58_ALPHABET[59] = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+// 58^i (i=0..10)
+__constant__ uint64_t POW58[11] = {
+    1ULL,
+    58ULL,
+    3364ULL,
+    195112ULL,
+    11316496ULL,
+    656356768ULL,
+    38068692544ULL,
+    2207984167552ULL,
+    128063081718016ULL,
+    7427658739644928ULL,
+    430804206899405824ULL
+};
 
 // 256位整数结构
 struct uint256_t {
@@ -122,6 +136,21 @@ __device__ void sub_mod_p(uint256_t* r, const uint256_t* x, const uint256_t* y) 
         sub_256(r, x, y);
     } else {
         uint256_t t; add_256(&t, x, &P); sub_256(r, &t, y);
+    }
+}
+
+// n域加一：r = (r + 1) mod n
+__device__ void add_one_mod_n(uint256_t* r) {
+    uint256_t N = make_u256(SECP256K1_N);
+    uint64_t carry = 1ULL;
+    for (int i = 0; i < 4; i++) {
+        uint64_t s = r->data[i] + carry;
+        carry = (s < r->data[i]) ? 1ULL : 0ULL;
+        r->data[i] = s;
+        if (!carry) break;
+    }
+    if (cmp_256(r, &N) >= 0) {
+        sub_256(r, r, &N);
     }
 }
 
@@ -766,6 +795,65 @@ __device__ __forceinline__ int d_strlen(const char* s) {
     return n;
 }
 
+// Base58 字符到索引（-1 无效）
+__device__ __forceinline__ int base58_index(char c) {
+    if (c >= '1' && c <= '9') return c - '1';
+    if (c >= 'A' && c <= 'H') return 9 + (c - 'A');
+    if (c >= 'J' && c <= 'N') return 17 + (c - 'J');
+    if (c >= 'P' && c <= 'Z') return 22 + (c - 'P');
+    if (c >= 'a' && c <= 'k') return 33 + (c - 'a');
+    if (c >= 'm' && c <= 'z') return 44 + (c - 'm');
+    return -1;
+}
+
+// 计算后缀字符串的数值及长度（Base58），返回值放入 out_val
+__device__ void suffix_value(const char* suffix, uint64_t* out_val, int* out_len) {
+    int len = d_strlen(suffix);
+    uint64_t v = 0ULL;
+    for (int i = 0; i < len; i++) {
+        int digit = base58_index(suffix[i]);
+        if (digit < 0) { v = 0ULL; len = 0; break; }
+        // v = v*58 + digit
+        uint64_t t = v * 58ULL + (uint64_t)digit;
+        v = t;
+    }
+    *out_val = v;
+    *out_len = len;
+}
+
+// 计算 25 字节 payload 对 58^len 的模
+__device__ uint64_t mod_58pow_25(const uint8_t payload[25], int len) {
+    if (len <= 0 || len > 10) return 0ULL;
+    const uint64_t M = POW58[len];
+    unsigned __int128 acc = 0;
+    #pragma unroll
+    for (int i = 0; i < 25; ++i) {
+        acc = (acc << 8) + payload[i];
+        acc %= (unsigned __int128)M;
+    }
+    return (uint64_t)acc;
+}
+
+// 序列化仿射 X,Y 为 64 字节（大端）
+__device__ void serialize_xy64(const uint256_t* X, const uint256_t* Y, uint8_t out64[64]) {
+    for (int i = 0; i < 4; i++) {
+        for (int j = 0; j < 8; j++) {
+            out64[i * 8 + j] = (X->data[3 - i] >> (56 - j * 8)) & 0xFF;
+            out64[32 + i * 8 + j] = (Y->data[3 - i] >> (56 - j * 8)) & 0xFF;
+        }
+    }
+}
+
+// 由仿射 X,Y 构建 25 字节 Base58Check 输入（含校验）
+__device__ void full_addr_from_xy(const uint256_t* X, const uint256_t* Y, uint8_t out25[25]) {
+    uint8_t pub64[64]; serialize_xy64(X, Y, pub64);
+    uint8_t hash[32]; keccak256(hash, pub64, 64);
+    uint8_t addr21[21]; addr21[0] = 0x41; memcpy(addr21 + 1, hash + 12, 20);
+    uint8_t sha1[32], sha2[32];
+    sha256(sha1, addr21, 21); sha256(sha2, sha1, 32);
+    memcpy(out25, addr21, 21); memcpy(out25 + 21, sha2, 4);
+}
+
 // 生成单个TRON地址
 __device__ void generate_tron_address(const uint256_t* private_key, char* address) {
     // 调试：打印私钥（仅在第一个线程）
@@ -815,6 +903,29 @@ __device__ void generate_tron_address(const uint256_t* private_key, char* addres
     #endif
 }
 
+// 直接从 Jacobian 点生成 TRON 地址（避免重复标量乘）
+__device__ void address_from_point(const JPoint* P_jacobian, char* address) {
+    // 仿射化并导出非压缩65字节公钥（0x04||X||Y）
+    uint8_t pubkey65[65]; jacobian_to_uncompressed65(P_jacobian, pubkey65);
+    // Keccak-256
+    uint8_t hash[32];
+    keccak256(hash, pubkey65 + 1, 64);
+    // 0x41 前缀 + 后20字节
+    uint8_t addr_bytes[21];
+    addr_bytes[0] = 0x41;
+    memcpy(addr_bytes + 1, hash + 12, 20);
+    // 双 SHA256 校验和
+    uint8_t sha1[32], sha2[32];
+    sha256(sha1, addr_bytes, 21);
+    sha256(sha2, sha1, 32);
+    // 25B 拼接
+    uint8_t full_addr[25];
+    memcpy(full_addr, addr_bytes, 21);
+    memcpy(full_addr + 21, sha2, 4);
+    // Base58 编码
+    base58_encode(address, full_addr, 25);
+}
+
 // 模式匹配
 __device__ bool match_pattern(const char* address, const char* prefix, const char* suffix) {
     // 新规则：仅匹配后缀（后N位），忽略前缀
@@ -841,48 +952,101 @@ __global__ void generate_batch(
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= batch_size) return;
     
-    // 生成随机私钥
-    // 使用LCG（线性同余生成器）产生伪随机数
+    // 生成随机初始私钥 k0（拒绝采样）
     uint64_t rng_state = seed + idx;
-    uint256_t private_key;
-    
-    // 拒绝采样：生成直到 1 <= k < n
+    uint256_t k;
     uint256_t N = make_u256(SECP256K1_N);
     while (true) {
-        // 生成256位随机数（基于LCG混洗；生产应换为 Philox/os.urandom）
         for (int i = 0; i < 4; i++) {
             rng_state = rng_state * 6364136223846793005ULL + 1442695040888963407ULL;
             uint64_t s = rng_state;
             s ^= s >> 33; s *= 0xff51afd7ed558ccdULL; s ^= s >> 33;
-            private_key.data[i] = s;
+            k.data[i] = s;
         }
-        // 检查范围
-        bool zero = (private_key.data[0]|private_key.data[1]|private_key.data[2]|private_key.data[3]) == 0ULL;
+        bool zero = (k.data[0]|k.data[1]|k.data[2]|k.data[3]) == 0ULL;
         if (zero) continue;
-        // if k >= n，重抽
-        if (private_key.data[3] > N.data[3] ||
-            (private_key.data[3] == N.data[3] &&
-             (private_key.data[2] > N.data[2] ||
-              (private_key.data[2] == N.data[2] &&
-               (private_key.data[1] > N.data[1] ||
-                (private_key.data[1] == N.data[1] && private_key.data[0] >= N.data[0])))))) {
+        if (k.data[3] > N.data[3] ||
+            (k.data[3] == N.data[3] &&
+             (k.data[2] > N.data[2] ||
+              (k.data[2] == N.data[2] &&
+               (k.data[1] > N.data[1] ||
+                (k.data[1] == N.data[1] && k.data[0] >= N.data[0])))))) {
             continue;
         }
         break;
     }
-    
-    // 生成地址
-    char address[35];
-    generate_tron_address(&private_key, address);
-    
-    // 复制结果
-    memcpy(addresses + idx * 35, address, 35);
-    if (private_keys) {
-        private_keys[idx] = private_key;
+
+    // 一次昂贵的标量乘：P0 = k0*G
+    JPoint P; scalar_mul(&P, &k);
+    JPoint GJ; GJ.X = make_u256(SECP256K1_GX); GJ.Y = make_u256(SECP256K1_GY); set_one_256(&GJ.Z);
+
+    // 多次廉价点加：每个线程尝试多次
+    const int ITERS_PER_THREAD = 1024;  // 可调：1k/4k/8k
+    const int BATCH = 16;               // 更小批，降低本地内存压力
+    JPoint buf[BATCH];
+    // 预处理目标后缀取模
+    uint64_t target_mod = 0ULL; int suffix_len = 0;
+    suffix_value(target_suffix, &target_mod, &suffix_len);
+    bool use_prefilter = (suffix_len > 0 && suffix_len <= 10);
+
+    for (int start = 0; start < ITERS_PER_THREAD; start += BATCH) {
+        // 保存这批的起始私钥，用于命中时复原 k_hit
+        uint256_t k_batch_start = k;
+        // 收集一批点
+        for (int j = 0; j < BATCH; ++j) {
+            buf[j] = P;
+            // 递增到下一把
+            add_one_mod_n(&k);
+            JPoint Pnext; point_add_jacobian(&Pnext, &P, &GJ); P = Pnext;
+        }
+
+        // 批量模逆：前缀、整体逆、反向得到 invZ[j]
+        uint256_t Z[BATCH], pref[BATCH], invZ[BATCH];
+        for (int j = 0; j < BATCH; ++j) Z[j] = buf[j].Z;
+        pref[0] = Z[0];
+        for (int j = 1; j < BATCH; ++j) mul_mod_p(&pref[j], &pref[j-1], &Z[j]);
+        uint256_t inv_all; mod_inverse_p(&inv_all, &pref[BATCH-1]);
+        uint256_t acc = inv_all;
+        for (int j = BATCH - 1; j >= 0; --j) {
+            if (j > 0) {
+                uint256_t t; mul_mod_p(&t, &acc, &pref[j-1]); invZ[j] = t;
+                uint256_t t2; mul_mod_p(&t2, &acc, &Z[j]); acc = t2;
+            } else {
+                invZ[0] = acc;
+            }
+        }
+
+        // 仿射、哈希、预筛、少量做Base58并最终匹配
+        for (int j = 0; j < BATCH; ++j) {
+            uint256_t inv2; sqr_mod_p(&inv2, &invZ[j]);
+            uint256_t inv3; mul_mod_p(&inv3, &inv2, &invZ[j]);
+            uint256_t Xa, Ya; mul_mod_p(&Xa, &buf[j].X, &inv2); mul_mod_p(&Ya, &buf[j].Y, &inv3);
+
+            uint8_t full25[25]; full_addr_from_xy(&Xa, &Ya, full25);
+            bool pass = true;
+            if (use_prefilter) {
+                uint64_t m = mod_58pow_25(full25, suffix_len);
+                pass = (m == target_mod);
+            }
+            if (!pass) continue;
+
+            // 最终 Base58 验证
+            char address[35]; base58_encode(address, full25, 25);
+            if (match_pattern(address, target_prefix, target_suffix)) {
+                memcpy(addresses + idx * 35, address, 35);
+                if (private_keys) {
+                    // 复原命中私钥 k_hit = k_batch_start + j (mod n)
+                    uint256_t k_hit = k_batch_start;
+                    for (int t = 0; t < j; ++t) add_one_mod_n(&k_hit);
+                    private_keys[idx] = k_hit;
+                }
+                matches[idx] = true;
+                return;
+            }
+        }
     }
-    
-    // 模式匹配
-    matches[idx] = match_pattern(address, target_prefix, target_suffix);
+    // 未命中
+    matches[idx] = false;
 }
 
 // C接口函数
