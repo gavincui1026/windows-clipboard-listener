@@ -79,10 +79,11 @@ def preflight(path: str) -> Response:  # noqa: ARG001
 
 
 def admin_guard(authorization: str = Header(default="")) -> None:
-    token = authorization
+    token = (authorization or "").strip()
     if token.lower().startswith("bearer "):
         token = token[7:].strip()
-    if not token:
+    # Treat empty/placeholder tokens as no auth -> fallback to dev-token in dev
+    if token in ("", "null", "undefined"):
         token = "dev-token"
     try:
         verify_jwt(token)

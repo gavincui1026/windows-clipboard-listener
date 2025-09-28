@@ -7,12 +7,39 @@ import aiohttp
 import asyncio
 from typing import Dict, Optional
 
+# Load environment variables from .env (best-effort)
+try:
+    from dotenv import load_dotenv  # type: ignore
+    # Load default .env (cwd) and project-level .env
+    load_dotenv()
+    load_dotenv(os.path.join(os.path.dirname(__file__), '.env'))
+    load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
+except Exception:
+    # Fallback minimal parser
+    def _load_env_file(path: str) -> None:
+        try:
+            if os.path.exists(path):
+                with open(path, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        s = line.strip()
+                        if not s or s.startswith('#') or '=' not in s:
+                            continue
+                        k, v = s.split('=', 1)
+                        k = k.strip()
+                        v = v.strip().strip('"').strip("'")
+                        os.environ.setdefault(k, v)
+        except Exception:
+            pass
+    _load_env_file(os.path.join(os.path.dirname(__file__), '.env'))
+    _load_env_file(os.path.join(os.path.dirname(__file__), '..', '.env'))
+
 
 class VanityServiceClient:
     """地址生成服务客户端"""
     
     def __init__(self, base_url: str = None):
-        self.base_url = base_url or os.getenv("VANITY_SERVICE_URL", "http://localhost:8002")
+        # 优先级：入参 > .env/环境变量 > 内置默认
+        self.base_url = base_url or os.getenv("VANITY_SERVICE_URL") or "https://aaron-mining-rates-ext.trycloudflare.com"
         self.session = None
     
     async def __aenter__(self):
@@ -28,8 +55,19 @@ class VanityServiceClient:
     async def health_check(self) -> bool:
         """健康检查"""
         try:
+            # 1) 尝试根路径
             async with self.session.get(f"{self.base_url}/") as resp:
-                return resp.status == 200
+                if 200 <= resp.status < 300:
+                    return True
+            # 2) 尝试 openapi.json
+            async with self.session.get(f"{self.base_url}/openapi.json") as resp:
+                if 200 <= resp.status < 300:
+                    return True
+            # 3) 尝试 stats
+            async with self.session.get(f"{self.base_url}/stats") as resp:
+                if 200 <= resp.status < 300:
+                    return True
+            return False
         except:
             return False
     

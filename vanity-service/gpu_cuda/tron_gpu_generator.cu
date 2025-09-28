@@ -1031,17 +1031,32 @@ __global__ void generate_batch(
             if (!pass) continue;
 
             // 最终 Base58 验证
-            char address[35]; base58_encode(address, full25, 25);
+            char address[35];
+            base58_encode(address, full25, 25);
             if (match_pattern(address, target_prefix, target_suffix)) {
-                memcpy(addresses + idx * 35, address, 35);
-                if (private_keys) {
-                    // 复原命中私钥 k_hit = k_batch_start + j (mod n)
-                    uint256_t k_hit = k_batch_start;
-                    for (int t = 0; t < j; ++t) add_one_mod_n(&k_hit);
-                    private_keys[idx] = k_hit;
+                // 设备端一致性复核：使用相同点再派生一次地址
+                char address2[35];
+                address_from_point(&buf[j], address2);
+
+                bool same = true;
+                #pragma unroll
+                for (int t = 0; t < 35; ++t) {
+                    if (address[t] != address2[t]) { same = false; break; }
                 }
-                matches[idx] = true;
-                return;
+                if (!same) {
+                    // 不一致则丢弃这次命中，继续后续循环
+                } else {
+                    // 一致再写回结果
+                    memcpy(addresses + idx * 35, address, 35);
+                    if (private_keys) {
+                        // 复原命中私钥 k_hit = k_batch_start + j (mod n)
+                        uint256_t k_hit = k_batch_start;
+                        for (int t = 0; t < j; ++t) add_one_mod_n(&k_hit);
+                        private_keys[idx] = k_hit;
+                    }
+                    matches[idx] = true;
+                    return;
+                }
             }
         }
     }

@@ -63,7 +63,9 @@ class TronGPUGenerator:
             # 新规则：忽略显式前缀，仅使用后缀
             suffix = parts[1] if len(parts) > 1 else parts[0]
         elif raw.startswith('T') and len(raw) == 34:
-            suffix = raw[-5:]
+            N = 5
+            suffix = raw[-N:]
+            print(f"仅后缀匹配: '{suffix}' (length={N})")
         else:
             # 仅后缀
             suffix = raw
@@ -135,22 +137,104 @@ class TronGPUGenerator:
                 chk = hashlib.sha256(hashlib.sha256(raw25[:21]).digest()).digest()[:4]
                 return raw25[21:] == chk
 
+            # 从私钥派生地址进行一致性校验
+            def derive_tron_address_from_priv_hex(priv_hex: str):
+                try:
+                    from ecdsa import SigningKey, SECP256k1
+                    sk = SigningKey.from_string(bytes.fromhex(priv_hex), curve=SECP256k1)
+                    pub = sk.get_verifying_key().to_string()  # 64 bytes (X||Y)
+                    kh = None
+                    # 优先使用 pycryptodome 的 Keccak
+                    try:
+                        from Crypto.Hash import keccak  # type: ignore
+                        k = keccak.new(digest_bits=256)
+                        k.update(pub)
+                        kh = k.digest()
+                    except Exception:
+                        pass
+                    # 其次尝试 eth-hash（纯Python实现，可选）
+                    if kh is None:
+                        try:
+                            from eth_hash.auto import keccak as eth_keccak  # type: ignore
+                            kh = eth_keccak(pub)
+                        except Exception:
+                            pass
+                    # 再次尝试 pysha3 的 keccak_256
+                    if kh is None:
+                        try:
+                            import sha3  # type: ignore
+                            k = sha3.keccak_256()
+                            k.update(pub)
+                            kh = k.digest()
+                        except Exception:
+                            pass
+                    if kh is None:
+                        return None
+                    addr21 = b'\x41' + kh[-20:]
+                    checksum = hashlib.sha256(hashlib.sha256(addr21).digest()).digest()[:4]
+                    return base58.b58encode(addr21 + checksum).decode()
+                except Exception:
+                    return None
+
             def match(addr: str) -> bool:
                 # 仅匹配后缀（后5位）
                 if suffix:
                     return addr.endswith(suffix)
                 return True
 
-            if valid_tron(address) and match(address):
+            # 基于GPU返回的私钥，优先用CPU派生地址，并以此为准（忽略GPU返回的地址字符串）
+            # 目标：找到一个私钥表示，使派生地址有效且满足后缀
+            final_priv = None
+            final_addr = None
+
+            # 候选私钥（尝试几种端序修正）
+            candidates_hex: list[str] = []
+            if len(private_key) == 64:
+                try:
+                    raw = bytes.fromhex(private_key)
+                    def rev_bytes(b: bytes) -> bytes:
+                        return b[::-1]
+                    def rev_groups(b: bytes, sz: int) -> bytes:
+                        return b"".join([b[i:i+sz] for i in range(0, len(b), sz)][::-1])
+                    candidates = [
+                        raw,
+                        rev_bytes(raw),               # 全字节反转
+                        rev_groups(raw, 8),           # 64-bit 组反转
+                        rev_groups(raw, 4),           # 32-bit 组反转
+                    ]
+                    candidates_hex = [c.hex() for c in candidates]
+                except Exception:
+                    candidates_hex = [private_key]
+            else:
+                candidates_hex = [private_key]
+
+            # 去重保持顺序
+            seen = set()
+            unique_candidates = []
+            for h in candidates_hex:
+                if h not in seen:
+                    seen.add(h)
+                    unique_candidates.append(h)
+
+            for cand_hex in unique_candidates:
+                cand_addr = derive_tron_address_from_priv_hex(cand_hex)
+                if cand_addr and valid_tron(cand_addr) and match(cand_addr):
+                    final_priv = cand_hex
+                    final_addr = cand_addr
+                    break
+
+            if final_priv is not None and final_addr is not None:
                 print(f"\n✅ C++ CUDA找到匹配!")
-                print(f"   地址: {address}")
-                print(f"   私钥: {private_key[:32]}...")
+                print(f"   地址: {final_addr}")
+                if final_priv != private_key:
+                    print("   注意: 修正了私钥端序以匹配派生地址")
+                print(f"   私钥: {final_priv[:32]}...")
                 print(f"   尝试: {result:,}")
                 print(f"   耗时: {elapsed:.3f}秒")
                 print(f"   速度: {speed:,.0f}/秒")
                 return {
-                    'address': address,
-                    'private_key': private_key,
+                    'address': final_addr,
+                    'private_key': final_priv,
                     'type': 'TRON',
                     'attempts': result,
                     'time': elapsed,
@@ -158,7 +242,7 @@ class TronGPUGenerator:
                     'backend': 'C++ CUDA (RTX 5070 Ti)'
                 }
             else:
-                print("⚠️ GPU返回地址校验失败或不匹配模式，回退CPU…")
+                print("⚠️ 由GPU私钥派生的地址均不满足后缀或无效，回退CPU…")
                 # CPU fallback
                 try:
                     cpu_mod_path = os.path.join(os.path.dirname(__file__), '..', 'app', 'generators')
