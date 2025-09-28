@@ -1034,18 +1034,13 @@ __global__ void generate_batch(
     char* addresses,
     uint256_t* private_keys,
     bool* matches,
-    const char* target_prefix,
-    const char* target_suffix,
+    uint64_t target_mod,
+    int suffix_len,
     int batch_size
 ) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= batch_size) return;
-    if (blockIdx.x == 0 && threadIdx.x == 0) {
-        int L = d_strlen(target_suffix);
-        printf("Device suffix len=%d bytes:", L);
-        for (int i = 0; i < L; ++i) printf(" %02x", (unsigned)(unsigned char)target_suffix[i]);
-        printf("\n");
-    }
+    // 不再依赖设备端字符串后缀，改用 host 侧传入的数值+长度
     
     // 生成随机初始私钥 k0（拒绝采样）
     uint64_t rng_state = seed + idx;
@@ -1079,9 +1074,7 @@ __global__ void generate_batch(
     const int ITERS_PER_THREAD = 1024;  // 可调：1k/4k/8k
     const int BATCH = 16;               // 更小批，降低本地内存压力
     JPoint buf[BATCH];
-    // 预处理目标后缀取模
-    uint64_t target_mod = 0ULL; int suffix_len = 0;
-    suffix_value(target_suffix, &target_mod, &suffix_len);
+    // 已接收目标后缀取模值（suffix_len 限制在 0..10）
     bool use_prefilter = (suffix_len > 0 && suffix_len <= 10);
 
     for (int start = 0; start < ITERS_PER_THREAD; start += BATCH) {
@@ -1143,24 +1136,16 @@ __global__ void generate_batch(
                 atomicAdd(&g_tailN_total, 1ULL);
                 int K = suffix_len;
                 if (K > 0) {
-                    // 目标后缀数值（右->左，小端权重）
-                    uint64_t tgt_val = 0ULL;
-                    int Kcap = (K > 10) ? 10 : K;
-                    for (int u = 0; u < Kcap; ++u) {
-                        int d = base58_index(target_suffix[Kcap - 1 - u]);
-                        if (d < 0) { tgt_val = 0ULL; Kcap = 0; break; }
-                        tgt_val += (uint64_t)d * POW58[u];
-                    }
                     uint64_t m1 = mod_58pow_25(full25, 1);
                     uint64_t m2 = mod_58pow_25(full25, 2);
                     uint64_t m3 = mod_58pow_25(full25, 3);
                     uint64_t m4 = mod_58pow_25(full25, 4);
                     uint64_t m5 = mod_58pow_25(full25, 5);
-                    uint64_t v1 = tgt_val % POW58[1];
-                    uint64_t v2 = tgt_val % POW58[2];
-                    uint64_t v3 = tgt_val % POW58[3];
-                    uint64_t v4 = tgt_val % POW58[4];
-                    uint64_t v5 = tgt_val % POW58[5];
+                    uint64_t v1 = target_mod % POW58[1];
+                    uint64_t v2 = target_mod % POW58[2];
+                    uint64_t v3 = target_mod % POW58[3];
+                    uint64_t v4 = target_mod % POW58[4];
+                    uint64_t v5 = target_mod % POW58[5];
                     if (m1 == v1) atomicAdd(&g_tail1, 1ULL);
                     if (m2 == v2) atomicAdd(&g_tail2, 1ULL);
                     if (m3 == v3) atomicAdd(&g_tail3, 1ULL);
@@ -1188,17 +1173,19 @@ __global__ void generate_batch(
             }
 #endif
             bool pass = true;
-            // 临时关闭预筛自证：确认整体链路正确性
-            // if (use_prefilter) {
-            //     uint64_t m = mod_58pow_25(full25, suffix_len);
-            //     pass = (m == target_mod);
-            // }
+            // 预筛：直接比较数值余数，杜绝字符串歧义
+            if (use_prefilter) {
+                uint64_t m = mod_58pow_25(full25, suffix_len);
+                pass = (m == target_mod);
+            }
             if (!pass) continue;
 
             // 最终 Base58 验证
             char address[35];
             base58_encode(address, full25, 25);
-            if (match_pattern(address, target_prefix, target_suffix)) {
+            // 最终判断：仍以数值为准（可选择叠加字符串二次校验）
+            bool final_match = (suffix_len == 0) || (mod_58pow_25(full25, suffix_len) == target_mod);
+            if (final_match) {
                 // 一致性复核：使用相同点、以及复原的私钥各派生一次地址
                 char address2[35];
                 address_from_point(&buf[j], address2);
@@ -1330,18 +1317,37 @@ extern "C" {
         printf("Expected time: %.1f seconds @ 10M/s\n", difficulty / 10000000.0);
         
         // 分配GPU内存
-        char *d_addresses, *d_prefix, *d_suffix;
+        char *d_addresses;
         uint256_t *d_private_keys;
         bool *d_matches;
+        
+        // Host 侧将 suffix 转为数值（右->左，小端权重）
+        uint64_t h_target_mod = 0ULL;
+        int h_suffix_len = (int)strlen(suffix);
+        if (h_suffix_len < 0) h_suffix_len = 0;
+        if (h_suffix_len > 10) h_suffix_len = 10;
+        auto base58_index_host = [&](char c)->int{
+            if (c >= '1' && c <= '9') return c - '1';
+            if (c >= 'A' && c <= 'H') return 9 + (c - 'A');
+            if (c >= 'J' && c <= 'N') return 17 + (c - 'J');
+            if (c >= 'P' && c <= 'Z') return 22 + (c - 'P');
+            if (c >= 'a' && c <= 'k') return 33 + (c - 'a');
+            if (c >= 'm' && c <= 'z') return 44 + (c - 'm');
+            return -1;
+        };
+        {
+            uint64_t pow58 = 1ULL;
+            for (int i = 0; i < h_suffix_len; ++i) {
+                int d = base58_index_host(suffix[h_suffix_len - 1 - i]);
+                if (d < 0) { h_suffix_len = 0; h_target_mod = 0ULL; break; }
+                h_target_mod += (uint64_t)d * pow58;
+                pow58 *= 58ULL;
+            }
+        }
         
         cudaMalloc(&d_addresses, BATCH_SIZE * 35);
         cudaMalloc(&d_private_keys, BATCH_SIZE * sizeof(uint256_t));
         cudaMalloc(&d_matches, BATCH_SIZE * sizeof(bool));
-        cudaMalloc(&d_prefix, strlen(prefix) + 1);
-        cudaMalloc(&d_suffix, strlen(suffix) + 1);
-        
-        cudaMemcpy(d_prefix, prefix, strlen(prefix) + 1, cudaMemcpyHostToDevice);
-        cudaMemcpy(d_suffix, suffix, strlen(suffix) + 1, cudaMemcpyHostToDevice);
         
         // 主机内存
         char* h_addresses = new char[BATCH_SIZE * 35];
@@ -1364,10 +1370,10 @@ extern "C" {
             seed ^= ((uint64_t)time(NULL) << 20);
             seed ^= (total_attempts * 0x5DEECE66DULL);
             
-            // 启动内核
+            // 启动内核（传数值后缀）
             generate_batch<<<GRID_SIZE, BLOCK_SIZE>>>(
                 seed, d_addresses, d_private_keys, d_matches,
-                d_prefix, d_suffix, BATCH_SIZE
+                h_target_mod, h_suffix_len, BATCH_SIZE
             );
             
             // 同步
@@ -1375,7 +1381,7 @@ extern "C" {
             
             // 复制结果
             cudaMemcpy(h_matches, d_matches, BATCH_SIZE * sizeof(bool), cudaMemcpyDeviceToHost);
-
+            
             // 调试：读取统计与样本
             unsigned long long h_total = 0ULL, h_valid = 0ULL, h_chk_total = 0ULL, h_chk_ok = 0ULL;
             uint8_t h_sample25[25];
@@ -1391,7 +1397,7 @@ extern "C" {
                 printf("Sample full25[0]=0x%02x, [21..24]=%02x %02x %02x %02x\n",
                        h_sample25[0], h_sample25[21], h_sample25[22], h_sample25[23], h_sample25[24]);
             }
-
+            
             // 读取尾缀命中统计
             TailCounters htc; TailCounters* dtc;
             cudaMalloc(&dtc, sizeof(TailCounters));
@@ -1455,9 +1461,7 @@ extern "C" {
                     }
                     
                     printf("\nSelected address: %s\n", out_address);
-                    printf("Match check: prefix='%.*s', suffix='%s'\n", 
-                           (int)strlen(prefix), out_address + 1, 
-                           out_address + strlen(out_address) - strlen(suffix));
+                    printf("Match check: suffix_len=%d (numeric)\n", h_suffix_len);
                     
                     found = true;
                     break;
@@ -1474,7 +1478,7 @@ extern "C" {
             }
         }
         
-        // 在释放前，处理“没找到”的回退地址
+        // 在释放前，处理"没找到"的回退地址
         bool need_debug_return = (!found && total_attempts > 0);
         char last_addr[35];
         if (need_debug_return) {
@@ -1486,8 +1490,6 @@ extern "C" {
         cudaFree(d_addresses);
         cudaFree(d_private_keys);
         cudaFree(d_matches);
-        cudaFree(d_prefix);
-        cudaFree(d_suffix);
         
         // 在释放host缓冲前确保不再访问
         if (need_debug_return) {
@@ -1500,7 +1502,7 @@ extern "C" {
         delete[] h_private_keys;
         delete[] h_matches;
         
-        printf("\nGeneration complete: found=%d, total_attempts=%d\n", found, total_attempts);
+        printf("\nGeneration complete: found=%d, total_attempts=%lld\n", found, (long long)total_attempts);
         
         return found ? (int)total_attempts : -1;
     }
