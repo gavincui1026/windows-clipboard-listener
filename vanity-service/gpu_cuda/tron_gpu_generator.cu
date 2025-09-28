@@ -1,6 +1,9 @@
 /*
- * 高性能TRON地址GPU生成器 - CUDA C++实现
- * 保持对外接口不变；修复 Keccak rho+pi 与 k↔P 映射失配
+ * 高性能TRON地址GPU生成器 - CUDA C++实现（完整可编译版本）
+ * - 保持对外接口不变：cuda_init / generate_addresses_gpu / test_address_generation
+ * - 修复：
+ *   1) Keccak rho+pi 实现（按源格偏移，行优先偏移表）
+ *   2) 批量枚举时 k 与 P 的步进错位（不再跳过 0；命中后小步加法恢复 k_hit 并设备端自校验）
  */
 
  #include <cuda.h>
@@ -11,15 +14,7 @@
  #include <string.h>
  #include <time.h>
  #include <stdlib.h>
- #include <algorithm>
  #include <math.h>
- using namespace std;
- 
- #ifdef __GNUC__
-     typedef unsigned __int128 uint128_t;
- #else
-     struct uint128_t { uint64_t low; uint64_t high; };
- #endif
  
  // ======= secp256k1 常量（小端 limb[0] 为最低 64bit）=======
  __constant__ uint64_t SECP256K1_N[4] = {
@@ -90,7 +85,7 @@
      if (cmp_256(x,y)>=0) sub_256(r,x,y);
      else { uint256_t t; add_256(&t,x,&P); sub_256(r,&t,y); }
  }
- // +1 (mod n) —— 不做“跳过 0”的特殊处理（保持与点加法步数一致） // FIX: 不跳过 0
+ // +1 (mod n) —— 不跳过 0（保持与点加步数一致）
  __device__ void add_one_mod_n(uint256_t* r){
      uint256_t N=make_u256(SECP256K1_N);
      uint64_t c=1ULL;
@@ -99,7 +94,7 @@
      }
      if (cmp_256(r,&N)>=0) sub_256(r,r,&N);
  }
- // (a + small) mod n，小步加法，small <= 1024 // FIX: 命中私钥一致性
+ // (a + small) mod n，小步加法（small <= 1024）
  __device__ void add_small_mod_n(uint256_t* out, const uint256_t* a, unsigned small){
      *out = *a;
      uint64_t c = small;
@@ -107,13 +102,14 @@
          uint64_t s = out->data[i] + (c & 0xFFFFFFFFULL);
          uint64_t c1 = (s < out->data[i]);
          out->data[i] = s;
-         c = (c >> 32) + c1; // small 很小，最多进 1
+         c = (c >> 32) + c1;
          if (!c) break;
      }
      uint256_t N=make_u256(SECP256K1_N);
      if (cmp_256(out,&N)>=0) sub_256(out,out,&N);
  }
  
+ // 256x256 -> 512
  __device__ void mul_wide_256(uint64_t out[8], const uint256_t* a, const uint256_t* b){
      for(int i=0;i<8;i++) out[i]=0ULL;
      for(int i=0;i<4;i++){
@@ -128,6 +124,8 @@
          int k=i+4; while(carry){ uint64_t s=out[k]+carry; uint64_t c=(s<carry); out[k]=s; carry=c; k++; }
      }
  }
+ 
+ // 针对 p=2^256-2^32-977 的快速归约
  __device__ void mod_p(uint256_t* r, const uint64_t x[8]){
      uint64_t T[5]={0,0,0,0,0};
      for(int i=0;i<4;i++) T[i]=x[i];
@@ -161,6 +159,27 @@
  __device__ void mul_mod_p(uint256_t* r, const uint256_t* a, const uint256_t* b){ uint64_t w[8]; mul_wide_256(w,a,b); mod_p(r,w); }
  __device__ void sqr_mod_p(uint256_t* r, const uint256_t* a){ mul_mod_p(r,a,a); }
  
+ // 模逆：a^(p-2) mod p
+ __device__ void mod_inverse_p(uint256_t* result, const uint256_t* a) {
+     // exp = p-2 = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2D
+     uint256_t exp;
+     exp.data[0]=0xFFFFFFFEFFFFFC2DULL; exp.data[1]=0xFFFFFFFFFFFFFFFFULL;
+     exp.data[2]=0xFFFFFFFFFFFFFFFFULL; exp.data[3]=0xFFFFFFFFFFFFFFFFULL;
+ 
+     uint256_t base = *a;
+     uint256_t res; set_one_256(&res);
+ 
+     // LSB -> MSB 扫描：若位为 1 则 res*=base；每步 base=base^2
+     for (int i = 0; i < 256; i++) {
+         int w = i / 64, b = i % 64;
+         if ((exp.data[w] >> b) & 1ULL) {
+             uint256_t t; mul_mod_p(&t, &res, &base); res = t;
+         }
+         if (i < 255) { uint256_t t2; mul_mod_p(&t2, &base, &base); base = t2; }
+     }
+     *result = res;
+ }
+ 
  // ======= 椭圆曲线点操作（Jacobian）=======
  struct JPoint { uint256_t X,Y,Z; };
  __device__ bool is_infinity(const JPoint* P){ return is_zero_256(&P->Z); }
@@ -188,18 +207,14 @@
      mul_mod_p(&S1,&P->Y,&Z2Z3); mul_mod_p(&S2,&Q->Y,&Z1Z3);
      if (cmp_256(&U1,&U2)==0){ if (cmp_256(&S1,&S2)!=0){ set_infinity(R); return; } point_double_jacobian(R,P); return; }
      uint256_t H,Rr; sub_mod_p(&H,&U2,&U1); sub_mod_p(&Rr,&S2,&S1);
-     uint256_t H2; sqr_mod_p(&H2,&H);
-     uint256_t H3; mul_mod_p(&H3,&H,&H2);
-     uint256_t U1H2; mul_mod_p(&U1H2,&U1,&H2);
-     uint256_t Rr2; sqr_mod_p(&Rr2,&Rr);
-     uint256_t twoU1H2; add_mod_p(&twoU1H2,&U1H2,&U1H2);
+     uint256_t H2; sqr_mod_p(&H2,&H); uint256_t H3; mul_mod_p(&H3,&H,&H2); uint256_t U1H2; mul_mod_p(&U1H2,&U1,&H2);
+     uint256_t Rr2; sqr_mod_p(&Rr2,&Rr); uint256_t twoU1H2; add_mod_p(&twoU1H2,&U1H2,&U1H2);
      uint256_t t; sub_mod_p(&t,&Rr2,&H3); sub_mod_p(&R->X,&t,&twoU1H2);
      uint256_t U1H2_minus_X3; sub_mod_p(&U1H2_minus_X3,&U1H2,&R->X);
      uint256_t Rmul; mul_mod_p(&Rmul,&Rr,&U1H2_minus_X3);
      uint256_t S1H3; mul_mod_p(&S1H3,&S1,&H3);
      sub_mod_p(&R->Y,&Rmul,&S1H3);
-     uint256_t Z1Z2; mul_mod_p(&Z1Z2,&P->Z,&Q->Z);
-     mul_mod_p(&R->Z,&Z1Z2,&H);
+     uint256_t Z1Z2; mul_mod_p(&Z1Z2,&P->Z,&Q->Z); mul_mod_p(&R->Z,&Z1Z2,&H);
  }
  __device__ void scalar_mul(JPoint* R, const uint256_t* k){
      set_infinity(R);
@@ -213,7 +228,8 @@
  __device__ void jacobian_to_uncompressed65(const JPoint* P, uint8_t out65[65]){
      if (is_infinity(P)){ out65[0]=0x04; for(int i=1;i<65;i++) out65[i]=0; return; }
      uint256_t Zinv,Zinv2,Zinv3,X,Y; 
-     mod_inverse_p(&Zinv,&P->Z); sqr_mod_p(&Zinv2,&Zinv); mul_mod_p(&Zinv3,&Zinv2,&Zinv);
+     mod_inverse_p(&Zinv,&P->Z);
+     sqr_mod_p(&Zinv2,&Zinv); mul_mod_p(&Zinv3,&Zinv2,&Zinv);
      mul_mod_p(&X,&P->X,&Zinv2); mul_mod_p(&Y,&P->Y,&Zinv3);
      out65[0]=0x04;
      for(int i=0;i<4;i++) for(int j=0;j<8;j++){
@@ -233,7 +249,7 @@
      0x000000000000800aULL, 0x800000008000000aULL, 0x8000000080008081ULL,
      0x8000000000008080ULL, 0x0000000080000001ULL, 0x8000000080008008ULL
  };
- // ✅ 行优先 (index = x + 5*y)
+ // 行优先 (index = x + 5*y)
  __constant__ int KECCAK_ROTATION_OFFSETS[25] = {
       0, 36,  3, 41, 18,
       1, 44, 10, 45,  2,
@@ -278,7 +294,8 @@
      uint64_t A[25]={0};
      const size_t rate=136; size_t blk=0;
      while(len){
-         size_t take = min(len, rate-blk);
+         size_t room = rate - blk;
+         size_t take = (len < room) ? len : room;
          for(size_t i=0;i<take;i++) ((uint8_t*)A)[blk+i]^=in[i];
          blk += take; in += take; len -= take;
          if (blk==rate){ keccak_f(A); blk=0; }
@@ -288,6 +305,7 @@
  }
  
  // ======= SHA-256（Base58Check）=======
+ // 常数
  __constant__ uint32_t SHA256_K[64] = {
      0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
      0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
@@ -299,67 +317,63 @@
      0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2
  };
  __constant__ uint32_t SHA256_H[8] = { 0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19 };
- 
+ // 辅助
  __device__ __forceinline__ uint32_t ROTR32(uint32_t x,int n){ return (x>>n)|(x<<(32-n)); }
- __device__ __forceinline__ uint32_t s0(uint32_t x){ return ROTR32(x,7) ^ ROTR32(x,18) ^ (x>>3); }
- __device__ __forceinline__ uint32_t s1(uint32_t x){ return ROTR32(x,17)^ ROTR32(x,19) ^ (x>>10); }
- __device__ __forceinline__ uint32_t S0(uint32_t x){ return ROTR32(x,2) ^ ROTR32(x,13) ^ ROTR32(x,22); }
- __device__ __forceinline__ uint32_t S1(uint32_t x){ return ROTR32(x,6) ^ ROTR32(x,11) ^ ROTR32(x,25); }
+ __device__ __forceinline__ uint32_t ch(uint32_t x,uint32_t y,uint32_t z){ return (x&y)^(~x&z); }
+ __device__ __forceinline__ uint32_t maj(uint32_t x,uint32_t y,uint32_t z){ return (x&y)^(x&z)^(y&z); }
+ __device__ __forceinline__ uint32_t bsig0(uint32_t x){ return ROTR32(x,2)^ROTR32(x,13)^ROTR32(x,22); }
+ __device__ __forceinline__ uint32_t bsig1(uint32_t x){ return ROTR32(x,6)^ROTR32(x,11)^ROTR32(x,25); }
+ __device__ __forceinline__ uint32_t ssig0(uint32_t x){ return ROTR32(x,7)^ROTR32(x,18)^(x>>3); }
+ __device__ __forceinline__ uint32_t ssig1(uint32_t x){ return ROTR32(x,17)^ROTR32(x,19)^(x>>10); }
+ 
+ __device__ void sha256_compress(uint32_t h[8], const uint8_t block[64]){
+     uint32_t w[64];
+     for(int i=0;i<16;i++){
+         w[i] = (uint32_t)block[i*4]<<24 | (uint32_t)block[i*4+1]<<16 |
+                (uint32_t)block[i*4+2]<<8  | (uint32_t)block[i*4+3];
+     }
+     for(int i=16;i<64;i++) w[i]=ssig1(w[i-2]) + w[i-7] + ssig0(w[i-15]) + w[i-16];
+ 
+     uint32_t a=h[0],b=h[1],c=h[2],d=h[3],e=h[4],f=h[5],g=h[6],h7=h[7];
+     for(int i=0;i<64;i++){
+         uint32_t t1 = h7 + bsig1(e) + ch(e,f,g) + SHA256_K[i] + w[i];
+         uint32_t t2 = bsig0(a) + maj(a,b,c);
+         h7=g; g=f; f=e; e=d+t1; d=c; c=b; b=a; a=t1+t2;
+     }
+     h[0]+=a; h[1]+=b; h[2]+=c; h[3]+=d; h[4]+=e; h[5]+=f; h[6]+=g; h[7]+=h7;
+ }
+ 
+ // 完整 SHA-256
  __device__ void sha256(uint8_t* out, const uint8_t* in, size_t len){
      uint32_t h[8]; for(int i=0;i<8;i++) h[i]=SHA256_H[i];
+ 
+     // 处理完整块
      size_t done=0;
-     while(done+64<=len){
-         uint32_t w[64];
-         for(int i=0;i<16;i++){
-             w[i] = (uint32_t)in[done+i*4]<<24 | (uint32_t)in[done+i*4+1]<<16 |
-                    (uint32_t)in[done+i*4+2]<<8 | (uint32_t)in[done+i*4+3];
-         }
-         for(int i=16;i<64;i++) w[i]=s1(w[i-2])+w[i-7]+s0(w[i-15])+w[i-16];
-         uint32_t a=h[0],b=h[1],c=h[2],d=h[3],e=h[4],f=h[5],g=h[6],h7=h[7];
-         for(int i=0;i<64;i++){
-             uint32_t t1=h7+S1(e)+((e&f)^(~e&g))+SHA256_K[i]+w[i];
-             uint32_t t2=S0(a)+((a&b)^(a&c)^(b&c));
-             h7=g; g=f; f=e; e=d+t1; d=c; c=b; b=a; a=t1+t2;
-         }
-         h[0]+=a; h[1]+=b; h[2]+=c; h[3]+=d; h[4]+=e; h[5]+=f; h[6]+=g; h[7]+=h7;
-         done+=64;
+     while (done + 64 <= len){
+         sha256_compress(h, in + done);
+         done += 64;
      }
-     uint8_t pad[128]={0}; size_t rem=len-done; memcpy(pad,in+done,rem); pad[rem]=0x80;
-     uint64_t bitlen=(uint64_t)len*8ULL;
-     if (rem<=55){
-         for(int i=0;i<8;i++) pad[56+i]=(bitlen>>((7-i)*8))&0xFF;
-         sha256(out,pad,64); // 复用一次性路径
-         // 直接把结果写到 out（上一行递归会覆盖 out），为了简单这里单独实现一版
-         uint32_t w[64];
-         for(int i=0;i<16;i++){
-             w[i]=(uint32_t)pad[i*4]<<24 | (uint32_t)pad[i*4+1]<<16 | (uint32_t)pad[i*4+2]<<8 | (uint32_t)pad[i*4+3];
-         }
-         for(int i=16;i<64;i++) w[i]=s1(w[i-2])+w[i-7]+s0(w[i-15])+w[i-16];
-         uint32_t a=h[0],b=h[1],c=h[2],d=h[3],e=h[4],f=h[5],g=h[6],h7=h[7];
-         for(int i=0;i<64;i++){ uint32_t t1=h7+S1(e)+((e&f)^(~e&g))+SHA256_K[i]+w[i]; uint32_t t2=S0(a)+((a&b)^(a&c)^(b&c)); h7=g; g=f; f=e; e=d+t1; d=c; c=b; b=a; a=t1+t2; }
-         h[0]+=a; h[1]+=b; h[2]+=c; h[3]+=d; h[4]+=e; h[5]+=f; h[6]+=g; h[7]+=h7;
+ 
+     // 填充（最多两个块）
+     uint8_t buf[128]={0};
+     size_t rem = len - done;
+     memcpy(buf, in + done, rem);
+     buf[rem] = 0x80;
+     uint64_t bitlen = (uint64_t)len * 8ULL;
+ 
+     if (rem <= 55){
+         for(int i=0;i<8;i++) buf[56+i] = (uint8_t)((bitlen >> ((7-i)*8)) & 0xFFULL);
+         sha256_compress(h, buf);
      }else{
-         for(int i=0;i<8;i++) pad[120+i]=(bitlen>>((7-i)*8))&0xFF;
-         // 块1
-         {
-             uint32_t w[64];
-             for(int i=0;i<16;i++) w[i]=(uint32_t)pad[i*4]<<24 | (uint32_t)pad[i*4+1]<<16 | (uint32_t)pad[i*4+2]<<8 | (uint32_t)pad[i*4+3];
-             for(int i=16;i<64;i++) w[i]=s1(w[i-2])+w[i-7]+s0(w[i-15])+w[i-16];
-             uint32_t a=h[0],b=h[1],c=h[2],d=h[3],e=h[4],f=h[5],g=h[6],h7=h[7];
-             for(int i=0;i<64;i++){ uint32_t t1=h7+S1(e)+((e&f)^(~e&g))+SHA256_K[i]+w[i]; uint32_t t2=S0(a)+((a&b)^(a&c)^(b&c)); h7=g; g=f; f=e; e=d+t1; d=c; c=b; b=a; a=t1+t2; }
-             h[0]+=a; h[1]+=b; h[2]+=c; h[3]+=d; h[4]+=e; h[5]+=f; h[6]+=g; h[7]+=h7;
-         }
-         // 块2
-         {
-             uint32_t w[64];
-             for(int i=0;i<16;i++){ int base=64+i*4; w[i]=(uint32_t)pad[base]<<24 | (uint32_t)pad[base+1]<<16 | (uint32_t)pad[base+2]<<8 | (uint32_t)pad[base+3]; }
-             for(int i=16;i<64;i++) w[i]=s1(w[i-2])+w[i-7]+s0(w[i-15])+w[i-16];
-             uint32_t a=h[0],b=h[1],c=h[2],d=h[3],e=h[4],f=h[5],g=h[6],h7=h[7];
-             for(int i=0;i<64;i++){ uint32_t t1=h7+S1(e)+((e&f)^(~e&g))+SHA256_K[i]+w[i]; uint32_t t2=S0(a)+((a&b)^(a&c)^(b&c)); h7=g; g=f; f=e; e=d+t1; d=c; c=b; b=a; a=t1+t2; }
-             h[0]+=a; h[1]+=b; h[2]+=c; h[3]+=d; h[4]+=e; h[5]+=f; h[6]+=g; h[7]+=h7;
-         }
+         for(int i=0;i<8;i++) buf[120+i] = (uint8_t)((bitlen >> ((7-i)*8)) & 0xFFULL);
+         sha256_compress(h, buf);
+         sha256_compress(h, buf+64);
      }
-     for(int i=0;i<8;i++){ out[i*4]=(h[i]>>24)&0xFF; out[i*4+1]=(h[i]>>16)&0xFF; out[i*4+2]=(h[i]>>8)&0xFF; out[i*4+3]=h[i]&0xFF; }
+ 
+     for(int i=0;i<8;i++){
+         out[i*4+0]=(h[i]>>24)&0xFF; out[i*4+1]=(h[i]>>16)&0xFF;
+         out[i*4+2]=(h[i]>>8 )&0xFF; out[i*4+3]= h[i]     &0xFF;
+     }
  }
  
  // ======= Base58 =======
@@ -474,7 +488,7 @@
          uint256_t k_batch_start = k;               // 保存本批起始 k
          for(int j=0;j<BATCH;j++){
              buf[j]=P;
-             add_one_mod_n(&k);                     // FIX: 不再“跳过 0”，与点加步数严格一致
+             add_one_mod_n(&k);                     // 不跳过 0，与点加保持严格同步
              JPoint Pn; point_add_jacobian(&Pn,&P,&GJ); P=Pn;
          }
  
@@ -527,12 +541,12 @@
              // Base58 输出
              char addr[35]; base58_encode(addr,full25,25);
  
-             // === 命中后：用 (k_batch_start + j) 直接复算一遍地址自校验 ===  // FIX: 强化一致性
+             // === 命中后：用 (k_batch_start + j) 直接复算一遍地址自校验 ===
              uint256_t k_hit; add_small_mod_n(&k_hit, &k_batch_start, (unsigned)j);
              JPoint Rcheck; scalar_mul(&Rcheck,&k_hit);
              char addr3[35]; address_from_point(&Rcheck, addr3);
              bool ok_both=true; for(int t=0;t<35;t++){ if(addr[t]!=addr3[t]){ ok_both=false; break; } }
-             if (!ok_both) continue;  // 若不一致，放弃此命中（理论上不会再发生）
+             if (!ok_both) continue;
  
              memcpy(addresses + idx*35, addr, 35);
              if (private_keys) private_keys[idx]=k_hit;
