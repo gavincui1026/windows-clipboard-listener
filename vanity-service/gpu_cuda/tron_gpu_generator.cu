@@ -1101,29 +1101,34 @@ __global__ void generate_batch(
             char address[35];
             base58_encode(address, full25, 25);
             if (match_pattern(address, target_prefix, target_suffix)) {
-                // 设备端一致性复核：使用相同点再派生一次地址
+                // 一致性复核：使用相同点、以及复原的私钥各派生一次地址
                 char address2[35];
                 address_from_point(&buf[j], address2);
 
-                bool same = true;
+                // 复原命中私钥 k_hit = k_batch_start + j (mod n)
+                uint256_t k_hit = k_batch_start;
+                for (int t = 0; t < j; ++t) add_one_mod_n(&k_hit);
+
+                JPoint P_check; scalar_mul(&P_check, &k_hit);
+                char address3[35]; address_from_point(&P_check, address3);
+
+                bool same_all = true;
                 #pragma unroll
                 for (int t = 0; t < 35; ++t) {
-                    if (address[t] != address2[t]) { same = false; break; }
+                    if (address[t] != address2[t] || address[t] != address3[t]) { same_all = false; break; }
                 }
-                if (!same) {
-                    // 不一致则丢弃这次命中，继续后续循环
-                } else {
-                    // 一致再写回结果
-                    memcpy(addresses + idx * 35, address, 35);
-                    if (private_keys) {
-                        // 复原命中私钥 k_hit = k_batch_start + j (mod n)
-                        uint256_t k_hit = k_batch_start;
-                        for (int t = 0; t < j; ++t) add_one_mod_n(&k_hit);
-                        private_keys[idx] = k_hit;
-                    }
-                    matches[idx] = true;
-                    return;
+                if (!same_all) {
+                    // 发现不同步，跳过此次命中，继续搜
+                    continue;
                 }
+
+                // 三重一致后写回结果
+                memcpy(addresses + idx * 35, address, 35);
+                if (private_keys) {
+                    private_keys[idx] = k_hit;
+                }
+                matches[idx] = true;
+                return;
             }
         }
     }
