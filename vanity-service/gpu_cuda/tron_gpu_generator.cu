@@ -480,12 +480,12 @@ __constant__ uint64_t KECCAK_ROUND_CONSTANTS[24] = {
 
 // Keccak-256旋转偏移量
 __constant__ int KECCAK_ROTATION_OFFSETS[25] = {
-    // row-major: index = x + 5*y (y rows, x cols)
-     0, 36,  3, 41, 18,
-     1, 44, 10, 45,  2,
-    62,  6, 43, 15, 61,
-    28, 55, 25, 21, 56,
-    27, 20, 39,  8, 14
+    // row-major (index = x + 5*y), offsets defined on source (x,y)
+     0,  1, 62, 28, 27,
+    36, 44,  6, 55, 20,
+     3, 10, 43, 25, 39,
+    41, 45, 15, 21,  8,
+    18,  2, 61, 56, 14
 };
 
 // Reference Keccak (XKCP style): theta, rho, pi, chi, iota
