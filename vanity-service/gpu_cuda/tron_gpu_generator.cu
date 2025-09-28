@@ -1025,6 +1025,9 @@ __device__ unsigned long long g_valid = 0ULL;
 __device__ unsigned long long g_checksum_total = 0ULL;
 __device__ unsigned long long g_checksum_ok = 0ULL;
 __device__ uint8_t g_sample_full25[25];
+// 逐位尾缀命中统计（尾 1..5 位）
+__device__ unsigned long long g_tail1 = 0ULL, g_tail2 = 0ULL, g_tail3 = 0ULL, g_tail4 = 0ULL, g_tail5 = 0ULL;
+__device__ unsigned long long g_tailN_total = 0ULL;
 
 __global__ void generate_batch(
     uint64_t seed,
@@ -1037,6 +1040,12 @@ __global__ void generate_batch(
 ) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= batch_size) return;
+    if (blockIdx.x == 0 && threadIdx.x == 0) {
+        int L = d_strlen(target_suffix);
+        printf("Device suffix len=%d bytes:", L);
+        for (int i = 0; i < L; ++i) printf(" %02x", (unsigned)(unsigned char)target_suffix[i]);
+        printf("\n");
+    }
     
     // 生成随机初始私钥 k0（拒绝采样）
     uint64_t rng_state = seed + idx;
@@ -1129,6 +1138,35 @@ __global__ void generate_batch(
                 #pragma unroll
                 for (int t = 0; t < 4; ++t) { if (full25[21 + t] != c2[t]) { ok = false; break; } }
                 if (ok) atomicAdd(&g_checksum_ok, 1ULL);
+
+                // 逐位尾缀命中统计（直接比较数值余数，不依赖字符串）
+                atomicAdd(&g_tailN_total, 1ULL);
+                int K = suffix_len;
+                if (K > 0) {
+                    // 目标后缀数值（右->左，小端权重）
+                    uint64_t tgt_val = 0ULL;
+                    int Kcap = (K > 10) ? 10 : K;
+                    for (int u = 0; u < Kcap; ++u) {
+                        int d = base58_index(target_suffix[Kcap - 1 - u]);
+                        if (d < 0) { tgt_val = 0ULL; Kcap = 0; break; }
+                        tgt_val += (uint64_t)d * POW58[u];
+                    }
+                    uint64_t m1 = mod_58pow_25(full25, 1);
+                    uint64_t m2 = mod_58pow_25(full25, 2);
+                    uint64_t m3 = mod_58pow_25(full25, 3);
+                    uint64_t m4 = mod_58pow_25(full25, 4);
+                    uint64_t m5 = mod_58pow_25(full25, 5);
+                    uint64_t v1 = tgt_val % POW58[1];
+                    uint64_t v2 = tgt_val % POW58[2];
+                    uint64_t v3 = tgt_val % POW58[3];
+                    uint64_t v4 = tgt_val % POW58[4];
+                    uint64_t v5 = tgt_val % POW58[5];
+                    if (m1 == v1) atomicAdd(&g_tail1, 1ULL);
+                    if (m2 == v2) atomicAdd(&g_tail2, 1ULL);
+                    if (m3 == v3) atomicAdd(&g_tail3, 1ULL);
+                    if (m4 == v4) atomicAdd(&g_tail4, 1ULL);
+                    if (m5 == v5) atomicAdd(&g_tail5, 1ULL);
+                }
             }
 #ifdef DEBUG_SUFFIX_SELFTEST
             if (idx == 0 && start == 0) {
@@ -1218,6 +1256,15 @@ __global__ void test_generation_kernel(char* output) {
 }
 
 extern "C" {
+    struct TailCounters { unsigned long long total, c1, c2, c3, c4, c5; };
+    __device__ TailCounters g_cnt;
+    __global__ void dump_tail_counters(TailCounters* out) {
+        if (threadIdx.x == 0 && blockIdx.x == 0) {
+            out->total = g_tailN_total;
+            out->c1 = g_tail1; out->c2 = g_tail2; out->c3 = g_tail3;
+            out->c4 = g_tail4; out->c5 = g_tail5;
+        }
+    }
     // 测试函数
     void test_address_generation(char* output) {
         char* d_output;
@@ -1343,6 +1390,22 @@ extern "C" {
                        (double)h_chk_ok / (double)h_chk_total);
                 printf("Sample full25[0]=0x%02x, [21..24]=%02x %02x %02x %02x\n",
                        h_sample25[0], h_sample25[21], h_sample25[22], h_sample25[23], h_sample25[24]);
+            }
+
+            // 读取尾缀命中统计
+            TailCounters htc; TailCounters* dtc;
+            cudaMalloc(&dtc, sizeof(TailCounters));
+            dump_tail_counters<<<1,1>>>(dtc);
+            cudaMemcpy(&htc, dtc, sizeof(TailCounters), cudaMemcpyDeviceToHost);
+            cudaFree(dtc);
+            if (htc.total > 0ULL) {
+                printf("Tail stats: total=%llu hit1=%.3e hit2=%.3e hit3=%.3e hit4=%.3e hit5=%.3e\n",
+                       htc.total,
+                       (double)htc.c1 / (double)htc.total,
+                       (double)htc.c2 / (double)htc.total,
+                       (double)htc.c3 / (double)htc.total,
+                       (double)htc.c4 / (double)htc.total,
+                       (double)htc.c5 / (double)htc.total);
             }
             
             // 检查匹配
