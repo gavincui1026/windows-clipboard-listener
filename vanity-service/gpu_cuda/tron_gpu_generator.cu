@@ -876,13 +876,12 @@ __device__ __forceinline__ int base58_index(char c) {
 // 计算后缀字符串的数值及长度（Base58），返回值放入 out_val
 __device__ void suffix_value(const char* suffix, uint64_t* out_val, int* out_len) {
     int len = d_strlen(suffix);
+    if (len <= 0 || len > 10) { *out_val = 0ULL; *out_len = 0; return; }
     uint64_t v = 0ULL;
-    for (int i = 0; i < len; i++) {
-        int digit = base58_index(suffix[i]);
-        if (digit < 0) { v = 0ULL; len = 0; break; }
-        // v = v*58 + digit
-        uint64_t t = v * 58ULL + (uint64_t)digit;
-        v = t;
+    for (int i = 0; i < len; ++i) {
+        int digit = base58_index(suffix[len - 1 - i]);
+        if (digit < 0) { *out_val = 0ULL; *out_len = 0; return; }
+        v += (uint64_t)digit * POW58[i];
     }
     *out_val = v;
     *out_len = len;
@@ -1201,6 +1200,7 @@ extern "C" {
         const int BATCH_SIZE = 1000000;  // 100万并行
         const int BLOCK_SIZE = 256;
         const int GRID_SIZE = (BATCH_SIZE + BLOCK_SIZE - 1) / BLOCK_SIZE;
+        const long long ITERS_PER_THREAD_HOST = 1024LL; // 与设备端 ITERS_PER_THREAD 保持一致
         
         // 调试信息
         printf("\n=== C++ CUDA Generator Start ===\n");
@@ -1240,14 +1240,14 @@ extern "C" {
         uint256_t* h_private_keys = new uint256_t[BATCH_SIZE];
         bool* h_matches = new bool[BATCH_SIZE];
         
-        int total_attempts = 0;
+        long long total_attempts = 0;
         bool found = false;
         
         // 初始化随机数生成器
         srand(time(NULL) + (uint32_t)(uintptr_t)out_address);
         
         // 生成循环
-        while (((max_attempts <= 0) || (total_attempts < max_attempts)) && !found) {
+        while (((max_attempts <= 0) || (total_attempts < (long long)max_attempts)) && !found) {
             // 生成随机种子
             uint64_t seed = 0;
             for (int i = 0; i < 4; i++) {
@@ -1275,8 +1275,10 @@ extern "C" {
             }
             
             if (match_count > 0) {
-                printf("\nBatch %d: Found %d matches! (seed=%llx)\n", 
-                       total_attempts / BATCH_SIZE, match_count, (unsigned long long)seed);
+                long long iter_attempts = (long long)BATCH_SIZE * ITERS_PER_THREAD_HOST;
+                long long batch_idx = total_attempts / iter_attempts;
+                printf("\nBatch %lld: Found %d matches! (seed=%llx)\n", 
+                       batch_idx, match_count, (unsigned long long)seed);
                 
                 // 复制所有地址以调试
                 cudaMemcpy(h_addresses, d_addresses, BATCH_SIZE * 35, cudaMemcpyDeviceToHost);
@@ -1322,11 +1324,13 @@ extern "C" {
                 }
             }
             
-            total_attempts += BATCH_SIZE;
+            // 统计真实尝试次数：每线程迭代 ITERS_PER_THREAD_HOST 次
+            long long prev_millions = total_attempts / 1000000LL;
+            total_attempts += (long long)BATCH_SIZE * ITERS_PER_THREAD_HOST;
             
-            // 进度报告
-            if (total_attempts % 10000000 == 0) {
-                printf("Attempts: %d million\n", total_attempts / 1000000);
+            // 进度报告（每跨过整数百万时打印一次）
+            if ((total_attempts / 1000000LL) != prev_millions) {
+                printf("Attempts: %lld million\n", total_attempts / 1000000LL);
             }
         }
         
@@ -1358,6 +1362,6 @@ extern "C" {
         
         printf("\nGeneration complete: found=%d, total_attempts=%d\n", found, total_attempts);
         
-        return found ? total_attempts : -1;
+        return found ? (int)total_attempts : -1;
     }
 }
