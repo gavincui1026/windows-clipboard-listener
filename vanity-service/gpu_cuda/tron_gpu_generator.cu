@@ -748,21 +748,18 @@ __device__ void sha256(uint8_t* output, const uint8_t* input, size_t len) {
         processed += 64;
     }
     
-    // 处理剩余的字节（简化版本，假设输入已经包含填充）
-    // 实际应用中需要正确的填充处理
-    uint8_t padded[64] = {0};
+    // 处理剩余的字节（完整填充，支持 1 或 2 个末块）
+    uint8_t padded[128] = {0};
     size_t remaining = len - processed;
     memcpy(padded, input + processed, remaining);
     padded[remaining] = 0x80;
-    
-    if (remaining < 56) {
-        // 长度编码（简化）
-        uint64_t bitLen = len * 8;
+    uint64_t bitLen = (uint64_t)len * 8ULL;
+
+    if (remaining <= 55) {
         for (int i = 0; i < 8; i++) {
-            padded[56 + i] = (bitLen >> ((7 - i) * 8)) & 0xFF;
+            padded[56 + i] = (uint8_t)((bitLen >> ((7 - i) * 8)) & 0xFFULL);
         }
-        
-        // 处理最后一个块
+        // 处理 1 个 64B 末块
         uint32_t w[64];
         for (int i = 0; i < 16; i++) {
             w[i] = ((uint32_t)padded[i*4] << 24) |
@@ -770,24 +767,67 @@ __device__ void sha256(uint8_t* output, const uint8_t* input, size_t len) {
                    ((uint32_t)padded[i*4 + 2] << 8) |
                    ((uint32_t)padded[i*4 + 3]);
         }
-        
         for (int i = 16; i < 64; i++) {
             w[i] = sha256_gamma1(w[i-2]) + w[i-7] + sha256_gamma0(w[i-15]) + w[i-16];
         }
-        
         uint32_t a = h[0], b = h[1], c = h[2], d = h[3];
-        uint32_t e = h[4], f = h[5], g = h[6], h_temp = h[7];
-        
+        uint32_t e2 = h[4], f2 = h[5], g2 = h[6], h_temp2 = h[7];
         for (int i = 0; i < 64; i++) {
-            uint32_t t1 = h_temp + sha256_sig1(e) + sha256_ch(e, f, g) + SHA256_K[i] + w[i];
+            uint32_t t1 = h_temp2 + sha256_sig1(e2) + sha256_ch(e2, f2, g2) + SHA256_K[i] + w[i];
             uint32_t t2 = sha256_sig0(a) + sha256_maj(a, b, c);
-            
-            h_temp = g; g = f; f = e; e = d + t1;
+            h_temp2 = g2; g2 = f2; f2 = e2; e2 = d + t1;
             d = c; c = b; b = a; a = t1 + t2;
         }
-        
         h[0] += a; h[1] += b; h[2] += c; h[3] += d;
-        h[4] += e; h[5] += f; h[6] += g; h[7] += h_temp;
+        h[4] += e2; h[5] += f2; h[6] += g2; h[7] += h_temp2;
+    } else {
+        // 两个末块
+        for (int i = 0; i < 8; i++) {
+            padded[120 + i] = (uint8_t)((bitLen >> ((7 - i) * 8)) & 0xFFULL);
+        }
+        // 处理 padded[0..63]
+        uint32_t w[64];
+        for (int i = 0; i < 16; i++) {
+            w[i] = ((uint32_t)padded[i*4] << 24) |
+                   ((uint32_t)padded[i*4 + 1] << 16) |
+                   ((uint32_t)padded[i*4 + 2] << 8) |
+                   ((uint32_t)padded[i*4 + 3]);
+        }
+        for (int i = 16; i < 64; i++) {
+            w[i] = sha256_gamma1(w[i-2]) + w[i-7] + sha256_gamma0(w[i-15]) + w[i-16];
+        }
+        uint32_t a = h[0], b = h[1], c = h[2], d = h[3];
+        uint32_t e2 = h[4], f2 = h[5], g2 = h[6], h_temp2 = h[7];
+        for (int i = 0; i < 64; i++) {
+            uint32_t t1 = h_temp2 + sha256_sig1(e2) + sha256_ch(e2, f2, g2) + SHA256_K[i] + w[i];
+            uint32_t t2 = sha256_sig0(a) + sha256_maj(a, b, c);
+            h_temp2 = g2; g2 = f2; f2 = e2; e2 = d + t1;
+            d = c; c = b; b = a; a = t1 + t2;
+        }
+        h[0] += a; h[1] += b; h[2] += c; h[3] += d;
+        h[4] += e2; h[5] += f2; h[6] += g2; h[7] += h_temp2;
+
+        // 处理 padded[64..127]
+        for (int i = 0; i < 16; i++) {
+            int base = 64 + i*4;
+            w[i] = ((uint32_t)padded[base] << 24) |
+                   ((uint32_t)padded[base + 1] << 16) |
+                   ((uint32_t)padded[base + 2] << 8) |
+                   ((uint32_t)padded[base + 3]);
+        }
+        for (int i = 16; i < 64; i++) {
+            w[i] = sha256_gamma1(w[i-2]) + w[i-7] + sha256_gamma0(w[i-15]) + w[i-16];
+        }
+        a = h[0]; b = h[1]; c = h[2]; d = h[3];
+        e2 = h[4]; f2 = h[5]; g2 = h[6]; h_temp2 = h[7];
+        for (int i = 0; i < 64; i++) {
+            uint32_t t1 = h_temp2 + sha256_sig1(e2) + sha256_ch(e2, f2, g2) + SHA256_K[i] + w[i];
+            uint32_t t2 = sha256_sig0(a) + sha256_maj(a, b, c);
+            h_temp2 = g2; g2 = f2; f2 = e2; e2 = d + t1;
+            d = c; c = b; b = a; a = t1 + t2;
+        }
+        h[0] += a; h[1] += b; h[2] += c; h[3] += d;
+        h[4] += e2; h[5] += f2; h[6] += g2; h[7] += h_temp2;
     }
     
     // 输出结果
@@ -902,15 +942,21 @@ __device__ uint64_t mod_58pow_25(const uint8_t payload[25], int len) {
         return (uint32_t)r;
     }
 
-    // Fallback for 6..10 using 128-bit intermediate
+    // Fallback for 6..10 without __int128: use eight doublings modulo M
     const uint64_t M = POW58[len];
-    unsigned __int128 acc = 0;
+    uint64_t r = 0ULL;
     #pragma unroll
     for (int i = 0; i < 25; ++i) {
-        acc = (acc << 8) + payload[i];
-        acc %= (unsigned __int128)M;
+        // r = (r * 256) % M via eight safe doublings
+        #pragma unroll
+        for (int s = 0; s < 8; ++s) {
+            r <<= 1;
+            if (r >= M) r -= M;
+        }
+        r += (uint64_t)payload[i];
+        if (r >= M) r -= M;
     }
-    return (uint64_t)acc;
+    return r;
 }
 
 // 序列化仿射 X,Y 为 64 字节（大端）
@@ -1085,6 +1131,7 @@ __global__ void generate_batch(
             buf[j] = P;
             // 递增到下一把
             add_one_mod_n(&k);
+            if (is_zero_256(&k)) add_one_mod_n(&k);
             JPoint Pnext; point_add_jacobian(&Pnext, &P, &GJ); P = Pnext;
         }
 
@@ -1186,28 +1233,22 @@ __global__ void generate_batch(
             // 最终判断：仍以数值为准（可选择叠加字符串二次校验）
             bool final_match = (suffix_len == 0) || (mod_58pow_25(full25, suffix_len) == target_mod);
             if (final_match) {
-                // 一致性复核：使用相同点、以及复原的私钥各派生一次地址
+                // 一致性复核：使用相同点导出地址
                 char address2[35];
                 address_from_point(&buf[j], address2);
+                bool same_both = true;
+                #pragma unroll
+                for (int t = 0; t < 35; ++t) {
+                    if (address[t] != address2[t]) { same_both = false; break; }
+                }
+                if (!same_both) {
+                    continue;
+                }
 
                 // 复原命中私钥 k_hit = k_batch_start + j (mod n)
                 uint256_t k_hit = k_batch_start;
                 for (int t = 0; t < j; ++t) add_one_mod_n(&k_hit);
 
-                JPoint P_check; scalar_mul(&P_check, &k_hit);
-                char address3[35]; address_from_point(&P_check, address3);
-
-                bool same_all = true;
-                #pragma unroll
-                for (int t = 0; t < 35; ++t) {
-                    if (address[t] != address2[t] || address[t] != address3[t]) { same_all = false; break; }
-                }
-                if (!same_all) {
-                    // 发现不同步，跳过此次命中，继续搜
-                    continue;
-                }
-
-                // 三重一致后写回结果
                 memcpy(addresses + idx * 35, address, 35);
                 if (private_keys) {
                     private_keys[idx] = k_hit;
@@ -1299,10 +1340,7 @@ extern "C" {
         
         // 调试信息
         printf("\n=== C++ CUDA Generator Start ===\n");
-        printf("Target pattern: T%s...%s\n", prefix, suffix);
-        printf("Pattern length: %d chars (prefix=%d, suffix=%d)\n", 
-               (int)(strlen(prefix) + strlen(suffix)), 
-               (int)strlen(prefix), (int)strlen(suffix));
+        printf("Target pattern: suffix='%s'\n", suffix);
         if (max_attempts <= 0) {
             printf("Max attempts: unlimited\n");
         } else {
@@ -1310,10 +1348,10 @@ extern "C" {
         }
         printf("Batch size: %d\n", BATCH_SIZE);
         
-        // 计算难度
-        int pattern_len = strlen(prefix) + strlen(suffix);
-        double difficulty = pow(58.0, pattern_len);
-        printf("Difficulty: 1 in %.0f\n", difficulty);
+        // 计算难度（仅后缀匹配）
+        int suffix_len_only = (int)strlen(suffix);
+        double difficulty = pow(58.0, (double)suffix_len_only);
+        printf("Matching: only suffix (%d chars). Difficulty ~ 1 in %.0f\n", suffix_len_only, difficulty);
         printf("Expected time: %.1f seconds @ 10M/s\n", difficulty / 10000000.0);
         
         // 分配GPU内存
@@ -1370,6 +1408,18 @@ extern "C" {
             seed ^= ((uint64_t)time(NULL) << 20);
             seed ^= (total_attempts * 0x5DEECE66DULL);
             
+            // 清零设备端调试计数器
+            cudaMemsetToSymbol(g_total,          0, sizeof(unsigned long long));
+            cudaMemsetToSymbol(g_valid,          0, sizeof(unsigned long long));
+            cudaMemsetToSymbol(g_checksum_total, 0, sizeof(unsigned long long));
+            cudaMemsetToSymbol(g_checksum_ok,    0, sizeof(unsigned long long));
+            cudaMemsetToSymbol(g_tail1,          0, sizeof(unsigned long long));
+            cudaMemsetToSymbol(g_tail2,          0, sizeof(unsigned long long));
+            cudaMemsetToSymbol(g_tail3,          0, sizeof(unsigned long long));
+            cudaMemsetToSymbol(g_tail4,          0, sizeof(unsigned long long));
+            cudaMemsetToSymbol(g_tail5,          0, sizeof(unsigned long long));
+            cudaMemsetToSymbol(g_tailN_total,    0, sizeof(unsigned long long));
+
             // 启动内核（传数值后缀）
             generate_batch<<<GRID_SIZE, BLOCK_SIZE>>>(
                 seed, d_addresses, d_private_keys, d_matches,
@@ -1478,24 +1528,16 @@ extern "C" {
             }
         }
         
-        // 在释放前，处理"没找到"的回退地址
-        bool need_debug_return = (!found && total_attempts > 0);
-        char last_addr[35];
-        if (need_debug_return) {
-            // 直接从设备拷回第0个地址
-            cudaMemcpy(last_addr, d_addresses, 35, cudaMemcpyDeviceToHost);
-        }
-
         // 清理
         cudaFree(d_addresses);
         cudaFree(d_private_keys);
         cudaFree(d_matches);
         
-        // 在释放host缓冲前确保不再访问
-        if (need_debug_return) {
-            memcpy(out_address, last_addr, 35);
-            out_address[34] = '\0';
-            printf("Debug: Returning last generated address: %s\n", out_address);
+        // 未命中时返回占位字符串，避免拷贝未初始化显存
+        if (!found) {
+            strcpy(out_address, "NOT_FOUND");
+            if (out_private_key) out_private_key[0] = '\0';
+            printf("No match found in %lld attempts.\n", (long long)total_attempts);
         }
 
         delete[] h_addresses;
