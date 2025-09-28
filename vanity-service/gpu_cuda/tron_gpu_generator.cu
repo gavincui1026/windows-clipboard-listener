@@ -1019,6 +1019,13 @@ __device__ bool match_pattern(const char* address, const char* prefix, const cha
 }
 
 // GPU批量生成内核
+// ---- 调试统计与采样（调试完可移除） ----
+__device__ unsigned long long g_total = 0ULL;
+__device__ unsigned long long g_valid = 0ULL;
+__device__ unsigned long long g_checksum_total = 0ULL;
+__device__ unsigned long long g_checksum_ok = 0ULL;
+__device__ uint8_t g_sample_full25[25];
+
 __global__ void generate_batch(
     uint64_t seed,
     char* addresses,
@@ -1102,6 +1109,27 @@ __global__ void generate_batch(
             uint256_t Xa, Ya; mul_mod_p(&Xa, &buf[j].X, &inv2); mul_mod_p(&Ya, &buf[j].Y, &inv3);
 
             uint8_t full25[25]; full_addr_from_xy(&Xa, &Ya, full25);
+
+            // 采样一条 full25 供主机侧对拍
+            if (idx == 0 && start == 0 && j == 0) {
+                #pragma unroll
+                for (int b = 0; b < 25; ++b) g_sample_full25[b] = full25[b];
+            }
+
+            // 抽样统计：有效 Base58 形态比率与校验和合法性
+            if ((idx & 0xFFF) == 0) {
+                atomicAdd(&g_total, 1ULL);
+                char tmpb58[35]; base58_encode(tmpb58, full25, 25);
+                if (tmpb58[0] == 'T' && d_strlen(tmpb58) == 34) atomicAdd(&g_valid, 1ULL);
+                atomicAdd(&g_checksum_total, 1ULL);
+                uint8_t c1[32], c2[32];
+                sha256(c1, full25, 21);
+                sha256(c2, c1, 32);
+                bool ok = true;
+                #pragma unroll
+                for (int t = 0; t < 4; ++t) { if (full25[21 + t] != c2[t]) { ok = false; break; } }
+                if (ok) atomicAdd(&g_checksum_ok, 1ULL);
+            }
 #ifdef DEBUG_SUFFIX_SELFTEST
             if (idx == 0 && start == 0) {
                 // Compare real Base58 tail value vs mod_58pow_25
@@ -1300,6 +1328,22 @@ extern "C" {
             
             // 复制结果
             cudaMemcpy(h_matches, d_matches, BATCH_SIZE * sizeof(bool), cudaMemcpyDeviceToHost);
+
+            // 调试：读取统计与样本
+            unsigned long long h_total = 0ULL, h_valid = 0ULL, h_chk_total = 0ULL, h_chk_ok = 0ULL;
+            uint8_t h_sample25[25];
+            cudaMemcpyFromSymbol(&h_total, g_total, sizeof(unsigned long long));
+            cudaMemcpyFromSymbol(&h_valid, g_valid, sizeof(unsigned long long));
+            cudaMemcpyFromSymbol(&h_chk_total, g_checksum_total, sizeof(unsigned long long));
+            cudaMemcpyFromSymbol(&h_chk_ok, g_checksum_ok, sizeof(unsigned long long));
+            cudaMemcpyFromSymbol(h_sample25, g_sample_full25, 25);
+            if (h_total > 0) {
+                printf("Debug stats: valid_ratio=%.3f, checksum_ok_ratio=%.3f\n",
+                       (double)h_valid / (double)h_total,
+                       (double)h_chk_ok / (double)h_chk_total);
+                printf("Sample full25[0]=0x%02x, [21..24]=%02x %02x %02x %02x\n",
+                       h_sample25[0], h_sample25[21], h_sample25[22], h_sample25[23], h_sample25[24]);
+            }
             
             // 检查匹配
             int match_count = 0;
