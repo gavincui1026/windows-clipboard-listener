@@ -1292,11 +1292,20 @@ extern "C" {
                     memcpy(out_address, h_addresses + i * 35, 35);
                     out_address[34] = '\0';  // 确保字符串结尾
                     
-                    // 转换私钥为十六进制
-                    for (int j = 0; j < 4; j++) {
-                        sprintf(out_private_key + j * 16, "%016llx", (unsigned long long)h_private_keys[i].data[3-j]);
+                    // 转换私钥为十六进制（严格大端，逐字节）
+                    {
+                        char* p = out_private_key;
+                        const uint256_t& kh = h_private_keys[i];
+                        for (int limb = 3; limb >= 0; --limb) {
+                            uint64_t w = kh.data[limb];
+                            for (int byte = 7; byte >= 0; --byte) {
+                                unsigned int v = (unsigned int)((w >> (byte * 8)) & 0xFFULL);
+                                sprintf(p, "%02x", v);
+                                p += 2;
+                            }
+                        }
+                        *p = '\0';
                     }
-                    out_private_key[64] = '\0';
                     
                     printf("\nSelected address: %s\n", out_address);
                     printf("Match check: prefix='%.*s', suffix='%s'\n", 
