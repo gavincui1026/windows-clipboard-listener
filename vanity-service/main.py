@@ -1,6 +1,6 @@
 """
 Vanity Address Generation Microservice
-独立的地址生成服务，支持CPU和GPU计算
+仅使用 vanitygen-plusplus 生成地址/私钥
 """
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
@@ -15,8 +15,7 @@ from concurrent.futures import ProcessPoolExecutor
 import multiprocessing
 
 from app.generators.vanity_generator import generate_similar_address, detect_address_type
-from app.generators.tron_generator_fixed import generate_real_tron_vanity
-from app.utils.gpu_wrapper import generate_with_gpu, GPU_AVAILABLE
+from app.utils.vanitygen_plusplus import is_vpp_available
 
 app = FastAPI(
     title="Vanity Address Service",
@@ -34,10 +33,14 @@ app.add_middleware(
 )
 
 # 全局配置
+# 全局配置
 PORT = int(os.getenv("PORT", "8002"))
 DEFAULT_TIMEOUT = float(os.getenv("DEFAULT_TIMEOUT", "1.5"))
 MAX_WORKERS = int(os.getenv("MAX_WORKERS", "0")) or multiprocessing.cpu_count()
 executor = ProcessPoolExecutor(max_workers=MAX_WORKERS)
+
+# vanitygen-plusplus 可用性
+VPP_AVAILABLE = is_vpp_available()
 
 # 任务存储（生产环境应该用Redis）
 tasks = {}
@@ -81,7 +84,7 @@ async def root():
     return {
         "service": "Vanity Address Generation Service",
         "status": "healthy",
-        "gpu_available": GPU_AVAILABLE,
+        "vpp_available": VPP_AVAILABLE,
         "cpu_cores": MAX_WORKERS,
         "version": "1.0.0"
     }
@@ -107,7 +110,7 @@ async def generate_address(request: GenerateRequest):
         # 生成地址
         result = await generate_similar_address(
             request.address,
-            use_gpu=request.use_gpu and GPU_AVAILABLE,
+            use_gpu=True,
             timeout=0
         )
         
@@ -176,7 +179,7 @@ async def process_generation_task(task_id: str, request: GenerateRequest):
         # 生成地址
         result = await generate_similar_address(
             request.address,
-            use_gpu=request.use_gpu and GPU_AVAILABLE,
+            use_gpu=True,
             timeout=0
         )
         
@@ -232,51 +235,31 @@ async def get_stats():
         "completed": completed_tasks,
         "failed": failed_tasks,
         "processing": processing_tasks,
-        "gpu_available": GPU_AVAILABLE,
+        "vpp_available": VPP_AVAILABLE,
         "cpu_cores": MAX_WORKERS
     }
 
 
 @app.post("/benchmark")
 async def benchmark():
-    """性能基准测试"""
-    test_addresses = {
-        "TRON": "TKzxdSv2FZKQrEqkKVgp5DcwEXBEKMg2Ax",
-        "ETH": "0x742d35Cc6634C0532925a3b844Bc9e7595f6E321",
-        "BTC": "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa"
-    }
-    
-    results = {}
-    
-    for coin, address in test_addresses.items():
-        start = time.time()
-        try:
-            # 测试CPU性能
-            cpu_result = await generate_similar_address(
-                address,
-                use_gpu=False,
-                timeout=0  # 不限时（基准逻辑可另行实现）
-            )
-            cpu_speed = cpu_result.get("attempts", 0) / 0.1
-            
-            # 测试GPU性能（如果可用）
-            gpu_speed = 0
-            if GPU_AVAILABLE:
-                gpu_result = await generate_similar_address(
-                    address,
-                    use_gpu=True,
-                    timeout=0
-                )
-                gpu_speed = gpu_result.get("attempts", 0) / 0.1
-            
-            results[coin] = {
-                "cpu_speed": f"{cpu_speed:.0f} addresses/sec",
-                "gpu_speed": f"{gpu_speed:.0f} addresses/sec" if gpu_speed > 0 else "N/A"
-            }
-        except Exception as e:
-            results[coin] = {"error": str(e)}
-    
-    return results
+    """性能基准测试（vanitygen-plusplus）"""
+    if not VPP_AVAILABLE:
+        return {"error": "vanitygen-plusplus 不可用"}
+
+    # 仅测试 BTC
+    address = "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa"
+    start = time.time()
+    try:
+        result = await generate_similar_address(address, use_gpu=True, timeout=0)
+        elapsed = time.time() - start
+        return {
+            "engine": "vanitygen-plusplus",
+            "success": result.get("success", False),
+            "elapsed_sec": round(elapsed, 2),
+            "note": "仅 BTC" 
+        }
+    except Exception as e:
+        return {"error": str(e)}
 
 
 # 清理过期任务
@@ -303,63 +286,8 @@ async def startup_event():
     print("✨ Vanity Address Generation Service")
     print("=" * 60)
     print(f"Platform: {os.name} ({'Windows' if os.name == 'nt' else 'Linux/Unix'})")
-    
-    # 检查跨平台GPU状态
-    gpu_universal_available = False
-    try:
-        from app.generators.gpu_universal import get_gpu_info
-        gpu_info = get_gpu_info()
-        
-        if gpu_info['available']:
-            gpu_universal_available = True
-            print("\n✅ 跨平台GPU加速已启用")
-            print(f"  后端: {gpu_info['backend']}")
-            print(f"  设备: {gpu_info['device']}")
-            print("  支持币种: TRON, ETH, BNB (更多币种开发中)")
-            print("  预期加速: 100x-200x")
-    except Exception as e:
-        print(f"\n⚠️ 跨平台GPU未就绪: {e}")
-    
-    # 检查外部GPU工具
-    if not gpu_universal_available and GPU_AVAILABLE:
-        print("\n✅ 外部GPU工具检测")
-        # 检查nvidia-smi (跨平台)
-        try:
-            import subprocess
-            nvidia_cmd = ['nvidia-smi', '--query-gpu=name,memory.total', '--format=csv,noheader']
-            result = subprocess.run(nvidia_cmd, capture_output=True, text=True, shell=(os.name=='nt'))
-            if result.returncode == 0:
-                print(f"  NVIDIA GPU: {result.stdout.strip()}")
-        except:
-            pass
-        
-        # 检查GPU工具
-        from app.utils.gpu_wrapper import PROFANITY2_PATH, VANITYSEARCH_PATH, GPU_TOOLS_PATH
-        print(f"  GPU工具目录: {os.path.abspath(GPU_TOOLS_PATH)}")
-        
-        if os.path.exists(PROFANITY2_PATH):
-            print(f"  ✓ profanity2: {os.path.basename(PROFANITY2_PATH)}")
-        else:
-            print(f"  ✗ profanity2: 未找到")
-            
-        if os.path.exists(VANITYSEARCH_PATH):
-            print(f"  ✓ VanitySearch: {os.path.basename(VANITYSEARCH_PATH)}")
-        else:
-            print(f"  ✗ VanitySearch: 未找到")
-    
-    # 如果没有任何GPU加速
-    if not gpu_universal_available and not GPU_AVAILABLE:
-        print("\n⚠️ GPU加速未启用，使用CPU模式")
-        print("  CPU生成速度：")
-        print("  - TRON: ~40,000/秒")
-        print("  - ETH/BNB: ~20,000/秒")
-        print("  - BTC: ~10,000/秒")
-        
-    # 安装提示
-    if not gpu_universal_available:
-        print(f"\n💡 提示: 安装跨平台GPU加速")
-        print(f"  运行: {'setup_gpu.bat' if os.name == 'nt' else './setup_gpu.sh'}")
-        print("  优势: 无需下载外部工具，pip install即可使用")
+    print("\n工具检测")
+    print(f"  vanitygen-plusplus: {'可用' if VPP_AVAILABLE else '不可用'}")
     
     print(f"\nCPU核心数: {MAX_WORKERS}")
     print(f"服务端口: {PORT}")

@@ -1,12 +1,18 @@
 """
-统一的地址生成器
-协调CPU和GPU生成
+统一的地址生成器（vanitygen-plusplus 版）
+仅通过 vanitygen-plusplus 生成地址/私钥
 """
 import time
 from typing import Dict, Optional, Tuple
 import asyncio
 from concurrent.futures import ProcessPoolExecutor
 import multiprocessing
+from app.utils.vanitygen_plusplus import (
+    generate_btc_with_vpp,
+    generate_trx_with_vpp,
+    generate_eth_with_vpp,
+    is_vpp_available,
+)
 
 # 地址类型检测
 def detect_address_type(address: str) -> Optional[str]:
@@ -83,11 +89,9 @@ async def generate_similar_address(
     timeout: float = 0
 ) -> Dict:
     """
-    生成相似地址的主函数
+    生成相似地址的主函数（仅支持 BTC）
     """
     start_time = time.time()
-    
-    # 新约定：timeout<=0 表示不限时，直到找到为止
     
     address_type = detect_address_type(original_address)
     
@@ -97,81 +101,36 @@ async def generate_similar_address(
             "error": "剪贴板内容不是支持的加密货币地址"
         }
     
-    # 提取模式
-    prefix, suffix = get_pattern_from_address(original_address, address_type)
-    if not prefix and not suffix:
-        return {
-            "success": False,
-            "error": "无法提取地址模式"
-        }
-    
-    # 根据地址类型选择生成策略
-    generated_address_info = None
-    
-    # 使用C++ CUDA GPU生成器
-    if use_gpu:
-        try:
-            # 检查CUDA是否可用
-            import os
-            import platform
-            
-            if platform.system() == 'Windows':
-                cuda_lib = os.path.join(os.path.dirname(__file__), '..', '..', 'gpu_cuda', 'tron_gpu.dll')
-            else:
-                cuda_lib = os.path.join(os.path.dirname(__file__), '..', '..', 'gpu_cuda', 'tron_gpu.so')
-            
-            if os.path.exists(cuda_lib):
-                # 使用C++ CUDA生成器
-                import sys
-                sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', 'gpu_cuda'))
-                from tron_gpu_wrapper import generate_tron_cuda
-                print("🔥 使用C++ CUDA生成器（极致性能）")
-                generated_address_info = await generate_tron_cuda(original_address, timeout)
-            else:
-                # 回退到CPU版本
-                import platform
-                print(f"⚠️ CUDA库未找到，使用CPU版本")
-                if platform.system() == 'Windows':
-                    print("   请先运行: cd gpu_cuda && build.bat")
-                else:
-                    print("   请先运行: cd gpu_cuda && bash build.sh")
-                from .tron_generator_fixed import generate_real_tron_vanity
-                cpu_result = generate_real_tron_vanity(original_address, timeout=timeout)
-                if cpu_result and cpu_result['found']:
-                    generated_address_info = {
-                        'address': cpu_result['address'],
-                        'private_key': cpu_result['private_key'],
-                        'type': 'TRON',
-                        'attempts': cpu_result.get('attempts', 0)
-                    }
-        except Exception as e:
+    # 使用 vanitygen-plusplus 生成（BTC / TRX / ETH）
+    try:
+        if address_type.startswith('BTC'):
+            result = await generate_btc_with_vpp(original_address, address_type)
+        elif address_type == 'TRON':
+            result = await generate_trx_with_vpp(original_address)
+        elif address_type == 'ETH':
+            result = await generate_eth_with_vpp(original_address)
+        else:
+            result = None
+        if result:
+            generation_time = time.time() - start_time
             return {
-                "success": False,
-                "error": f"生成失败: {e}"
+                "success": True,
+                "original_address": original_address,
+                "generated_address": result['address'],
+                "private_key": result['private_key'],
+                "address_type": result.get('type', address_type),
+                "balance": "0",
+                "attempts": 0,
+                "generation_time": generation_time
             }
-    else:
         return {
             "success": False,
-            "error": "该服务仅支持GPU模式，请设置use_gpu=true"
+            "error": "vanitygen-plusplus 未找到或未能生成匹配地址"
         }
-    
-    # 返回结果
-    if generated_address_info:
-        generation_time = time.time() - start_time
-        return {
-            "success": True,
-            "original_address": original_address,
-            "generated_address": generated_address_info['address'],
-            "private_key": generated_address_info['private_key'],
-            "address_type": generated_address_info.get('type', address_type),
-            "balance": "0",
-            "attempts": generated_address_info.get('attempts', 0),
-            "generation_time": generation_time
-        }
-    else:
+    except Exception as e:
         return {
             "success": False,
-            "error": f"在{timeout}秒内未能生成匹配的{address_type}地址"
+            "error": f"生成失败: {e}"
         }
 
 
