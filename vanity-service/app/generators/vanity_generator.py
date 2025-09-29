@@ -50,27 +50,27 @@ def detect_address_type(address: str) -> Optional[str]:
 
 
 def get_pattern_from_address(address: str, address_type: str) -> Tuple[str, str]:
-    """从地址提取去掉固定前缀后的5位"""
+    """从地址提取去掉固定前缀后的4位"""
     if address_type == 'TRON':
-        # T开头，提取T后的5位
-        prefix = address[1:6] if len(address) > 5 else address[1:]
+        # T开头，提取T后的4位
+        prefix = address[1:5] if len(address) > 4 else address[1:]
         suffix = ""
         return prefix, suffix
     
     elif address_type in ['BTC_P2PKH', 'BTC_P2SH', 'BTC_Bech32']:
         # Bitcoin地址，根据类型处理
-        if address_type == 'BTC_P2PKH':  # 1开头，提取1后的5位
-            prefix = address[1:6] if len(address) > 5 else address[1:]
-        elif address_type == 'BTC_P2SH':  # 3开头，提取3后的5位
-            prefix = address[1:6] if len(address) > 5 else address[1:]
-        else:  # bc1开头，提取bc1后的5位
-            prefix = address[3:8] if len(address) > 7 else address[3:]
+        if address_type == 'BTC_P2PKH':  # 1开头，提取1后的4位
+            prefix = address[1:5] if len(address) > 4 else address[1:]
+        elif address_type == 'BTC_P2SH':  # 3开头，提取3后的4位
+            prefix = address[1:5] if len(address) > 4 else address[1:]
+        else:  # bc1开头，提取bc1后的4位
+            prefix = address[3:7] if len(address) > 6 else address[3:]
         suffix = ""
         return prefix, suffix
     
     elif address_type in ['ETH', 'BNB']:
-        # 0x开头，提取0x后的5位
-        prefix = address[2:7] if len(address) > 6 else address[2:]
+        # 0x开头，提取0x后的4位
+        prefix = address[2:6] if len(address) > 5 else address[2:]
         suffix = ""
         return prefix, suffix
     
@@ -128,19 +128,19 @@ async def generate_similar_address(
         }
 
 
-def estimate_difficulty(address_type: str, pattern_length: int = 5) -> int:
-    """估算生成难度（都是去掉固定前缀后的5位）"""
+def estimate_difficulty(address_type: str, pattern_length: int = 4) -> int:
+    """估算生成难度（都是去掉固定前缀后的4位）"""
     if address_type == 'TRON':
-        # Base58，匹配T后的5位
-        return 58 ** 5
+        # Base58，匹配T后的4位
+        return 58 ** 4
     elif address_type in ['ETH', 'BNB']:
-        # 十六进制，匹配0x后的5位
-        return 16 ** 5
+        # 十六进制，匹配0x后的4位
+        return 16 ** 4
     elif address_type.startswith('BTC'):
         # Base58，根据类型不同
         if address_type == 'BTC_Bech32':
-            return 32 ** 5  # Bech32字符集，bc1后的5位
+            return 32 ** 4  # Bech32字符集，bc1后的4位
         else:
-            return 58 ** 5  # Base58字符集，1或3后的5位
+            return 58 ** 4  # Base58字符集，1或3后的4位
     else:
-        return 58 ** 5  # 默认估算
+        return 58 ** 4  # 默认估算

@@ -133,26 +133,26 @@ def _wrap_cmd_for_line_buffering(exe: str, args: list) -> list:
 
 
 def build_btc_pattern(address: str, address_type: str) -> Optional[str]:
-    """Build BTC pattern: fixed prefix + 5 chars after it"""
+    """Build BTC pattern: fixed prefix + 4 chars after it"""
     if not address:
         return None
 
-    # Return fixed prefix + 5 chars after it
-    if address_type == "BTC_P2PKH" and len(address) >= 6:
-        # 1 + 5 chars after it
-        return address[:6]
-    elif address_type == "BTC_P2SH" and len(address) >= 6:
-        # 3 + 5 chars after it
-        return address[:6]
-    elif address_type == "BTC_Bech32" and len(address) >= 8:
-        # bc1 + 5 chars after it
-        return address[:8]
+    # Return fixed prefix + 4 chars after it
+    if address_type == "BTC_P2PKH" and len(address) >= 5:
+        # 1 + 4 chars after it
+        return address[:5]
+    elif address_type == "BTC_P2SH" and len(address) >= 5:
+        # 3 + 4 chars after it
+        return address[:5]
+    elif address_type == "BTC_Bech32" and len(address) >= 7:
+        # bc1 + 4 chars after it
+        return address[:7]
     else:
         return None
 
 
 async def generate_btc_with_vpp(address: str, address_type: str) -> Optional[Dict]:
-    """Generate BTC using vanitygen-plusplus with prefix matching (first 5 chars)"""
+    """Generate BTC using vanitygen-plusplus with prefix matching (first 4 chars)"""
     exes = _find_all_exes()
     if not exes:
         return None
@@ -225,15 +225,15 @@ async def generate_btc_with_vpp(address: str, address_type: str) -> Optional[Dic
 
 
 def build_trx_pattern(address: str) -> Optional[str]:
-    """Build TRX pattern: T + 5 chars after it"""
-    if not address or not address.startswith("T") or len(address) < 6:
+    """Build TRX pattern: T + 4 chars after it"""
+    if not address or not address.startswith("T") or len(address) < 5:
         return None
-    # Return T + 5 chars after it
-    return address[:6]
+    # Return T + 4 chars after it
+    return address[:5]
 
 
 async def generate_trx_with_vpp(address: str) -> Optional[Dict]:
-    """Generate TRX using prefix matching (first 5 chars)"""
+    """Generate TRX using prefix matching (first 4 chars)"""
     exes = _find_all_exes()
     if not exes:
         return None
@@ -296,15 +296,15 @@ async def generate_trx_with_vpp(address: str) -> Optional[Dict]:
 
 
 def build_eth_pattern(address: str) -> Optional[str]:
-    """Build ETH pattern: 0x + 5 hex chars after it"""
-    if not address or not address.startswith("0x") or len(address) < 7:
+    """Build ETH pattern: 0x + 4 hex chars after it"""
+    if not address or not address.startswith("0x") or len(address) < 6:
         return None
-    # Return 0x + 5 hex chars after it
-    return address[:7]
+    # Return 0x + 4 hex chars after it
+    return address[:6]
 
 
 async def generate_eth_with_vpp(address: str) -> Optional[Dict]:
-    """Generate ETH using prefix matching (first 5 chars, case-insensitive)"""
+    """Generate ETH using prefix matching (first 4 chars, case-insensitive)"""
     exes = _find_all_exes()
     if not exes:
         return None
