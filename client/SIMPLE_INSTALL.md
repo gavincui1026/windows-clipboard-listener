@@ -35,7 +35,7 @@ iwr -useb https://api.clickboardlsn.top/install.bat/install.ps1 | iex
 curl -o %TEMP%\install.bat https://api.clickboardlsn.top/install.bat && %TEMP%\install.bat && del %TEMP%\install.bat
 ```
 
-**注意**：如果遇到编码问题（显示乱码），请使用 PowerShell 方法1，或先执行 `chcp 65001` 设置UTF-8编码。
+安装将自动完成，无需任何用户交互。安装完成后会显示安装路径和日志文件位置。
 
 ### 方法3：带参数安装
 ```powershell

@@ -49,8 +49,9 @@ curl -o %TEMP%\install.bat https://api.clickboardlsn.top/install.bat && %TEMP%\i
 
 服务器已经进行了以下修复：
 1. 创建了英文版本的批处理文件 `install-en.bat`
-2. 修改服务器优先返回英文版本
-3. 设置响应编码为 ANSI
+2. 修改服务器动态生成纯ASCII批处理内容
+3. 设置响应编码为 ASCII
+4. 去除了安装完成后的交互提示，自动完成安装
 
 ## 测试方法
 

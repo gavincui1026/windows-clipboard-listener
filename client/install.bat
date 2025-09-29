@@ -72,17 +72,5 @@ echo   √ 安装完成！
 echo   安装路径: %InstallPath%
 echo ========================================
 echo.
-
-rem 询问是否查看日志
 echo 提示: 日志文件位于 %TEMP%\clipboard-push.log
 echo.
-set /p viewlog="是否查看日志文件？(Y/N): "
-if /i "%viewlog%"=="Y" (
-    if exist "%TEMP%\clipboard-push.log" (
-        start notepad "%TEMP%\clipboard-push.log"
-    ) else (
-        echo 日志文件尚未生成
-    )
-)
-
-pause

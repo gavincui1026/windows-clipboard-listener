@@ -117,20 +117,8 @@ echo   Installation Complete!
 echo   Install Path: %InstallPath%
 echo ========================================
 echo.
-
-rem Ask if view log
 echo Tip: Log file is located at %TEMP%\\clipboard-push.log
 echo.
-set /p viewlog="Do you want to view the log file? (Y/N): "
-if /i "%viewlog%"=="Y" (
-    if exist "%TEMP%\\clipboard-push.log" (
-        start notepad "%TEMP%\\clipboard-push.log"
-    ) else (
-        echo Log file not yet created
-    )
-)
-
-pause
 """
     
     # 返回纯ASCII内容，确保CMD兼容
