@@ -37,14 +37,32 @@ except Exception:
 class VanityServiceClient:
     """地址生成服务客户端"""
     
-    def __init__(self, base_url: str = None):
+    def __init__(self, base_url: str = None, verify_ssl: bool = None):
         # 优先级：入参 > .env/环境变量 > 内置默认
         self.base_url = base_url or os.getenv("VANITY_SERVICE_URL") or "https://trainers-pads-switches-links.trycloudflare.com"
+        # SSL验证设置：默认根据URL判断，本地服务不验证，HTTPS服务可选择性验证
+        if verify_ssl is None:
+            # 环境变量控制，默认对localhost不验证
+            verify_ssl_env = os.getenv("VERIFY_SSL", "").lower()
+            if verify_ssl_env in ("false", "0", "no"):
+                self.verify_ssl = False
+            elif verify_ssl_env in ("true", "1", "yes"):
+                self.verify_ssl = True
+            else:
+                # 默认：本地地址不验证，远程HTTPS地址验证
+                self.verify_ssl = not any(host in self.base_url for host in ["localhost", "127.0.0.1", "http://"])
+        else:
+            self.verify_ssl = verify_ssl
         self.session = None
     
     async def __aenter__(self):
         """异步上下文管理器入口"""
-        self.session = aiohttp.ClientSession()
+        # 创建连接器，控制SSL验证
+        connector = aiohttp.TCPConnector(
+            limit=64,  # 连接池大小
+            verify_ssl=self.verify_ssl
+        )
+        self.session = aiohttp.ClientSession(connector=connector)
         return self
     
     async def __aexit__(self, exc_type, exc_val, exc_tb):

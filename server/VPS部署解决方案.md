@@ -1,9 +1,16 @@
 # VPS服务器Vanity连接问题解决方案
 
 ## 问题描述
+
+### 1. 网络连接错误
 错误信息：`Cannot connect to host trainers-pads-switches-links.trycloudflare.com:443 ssl:default [Network is unreachable]`
 
 这个错误通常发生在VPS服务器无法访问Cloudflare Tunnel暴露的服务时。
+
+### 2. SSL证书验证错误
+错误信息：`SSLCertVerificationError: certificate verify failed: self signed certificate in certificate chain`
+
+这个错误发生在HTTPS连接时SSL证书验证失败，通常是因为使用了自签名证书或证书链不完整。
 
 ## 快速解决方案
 
@@ -52,7 +59,36 @@ export VANITY_SERVICE_URL=http://YOUR_VANITY_SERVER_IP:8002
 VANITY_SERVICE_URL=http://YOUR_VANITY_SERVER_IP:8002
 ```
 
-### 方案3：解决网络问题
+### 方案3：解决SSL证书验证问题
+
+如果必须使用HTTPS连接但遇到SSL证书问题：
+
+1. **临时禁用SSL验证（仅用于测试）**
+```bash
+# 在.env文件中添加
+VERIFY_SSL=false
+```
+
+2. **安装证书**
+```bash
+# 更新证书库
+apt-get update && apt-get install ca-certificates
+
+# 如果使用自签名证书，添加到信任列表
+cp your-cert.crt /usr/local/share/ca-certificates/
+update-ca-certificates
+```
+
+3. **使用环境变量控制**
+```bash
+# 临时禁用Python的SSL验证
+export PYTHONHTTPSVERIFY=0
+
+# 或在代码中已经实现的环境变量
+export VERIFY_SSL=false
+```
+
+### 方案4：解决网络问题
 
 1. **检查DNS设置**
 ```bash

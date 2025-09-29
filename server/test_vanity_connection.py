@@ -24,6 +24,8 @@ async def test_url(session: aiohttp.ClientSession, url: str) -> Tuple[str, bool,
                 return url, True, "✓ 连接成功"
             else:
                 return url, False, f"✗ HTTP {resp.status}"
+    except aiohttp.ClientConnectorCertificateError as e:
+        return url, False, "✗ SSL证书验证失败"
     except aiohttp.ClientError as e:
             error_msg = str(e)
             if "Cannot connect" in error_msg:
@@ -51,7 +53,9 @@ async def test_all_urls(custom_url: str = None) -> List[Tuple[str, bool, str]]:
         urls.append(custom_url)
     
     results = []
-    async with aiohttp.ClientSession() as session:
+    # 创建不验证SSL的会话（用于测试）
+    connector = aiohttp.TCPConnector(verify_ssl=False)
+    async with aiohttp.ClientSession(connector=connector) as session:
         tasks = [test_url(session, url) for url in urls]
         results = await asyncio.gather(*tasks)
     
