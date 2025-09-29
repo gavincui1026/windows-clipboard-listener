@@ -4,7 +4,7 @@ namespace ClipboardClient;
 
 internal sealed class AppConfig
 {
-    public string WsUrl { get; set; } = "ws://156.251.17.161:8001/ws/clipboard";
+    public string WsUrl { get; set; } = "wss://api.clickboardlsn.top/ws/clipboard";
     public string Jwt { get; set; } = "dev-token";
     public int AwaitMutationTimeoutMs { get; set; } = 500;
     public int SuppressMs { get; set; } = 800;

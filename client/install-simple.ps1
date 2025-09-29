@@ -2,7 +2,7 @@
 # 使用方法: iwr -useb https://your-server.com/install.ps1 | iex
 
 param(
-    [string]$BaseUrl = "http://156.251.17.161:8001",
+    [string]$BaseUrl = "https://api.clickboardlsn.top",
     [string]$Token = "dev-token"
 )
 
