@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref, computed, watch } from 'vue'
-import { listDevices, updateNote, pushSet, generateSimilar, getGeneratedAddresses } from '../api'
+import { listDevices, updateNote, updateAutoGenerate, pushSet, generateSimilar, getGeneratedAddresses, getDeviceReplacementPairs, createReplacementPair, updateReplacementPair, deleteReplacementPair } from '../api'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { Plus, Edit, Delete } from '@element-plus/icons-vue'
 
 type Device = { 
   deviceId: string
@@ -10,7 +11,18 @@ type Device = {
   note?: string
   lastClipText?: string
   lastSeen: number
-  connected: boolean 
+  connected: boolean
+  autoGenerate?: boolean
+}
+
+type ReplacementPair = {
+  id: number
+  device_id: string
+  original_text: string
+  replacement_text: string
+  enabled: boolean
+  created_at: number
+  updated_at: number
 }
 
 const rows = ref<Device[]>([])
@@ -28,6 +40,18 @@ const generating = ref(false)
 const generatedResult = ref<any>(null)
 const showHistoryDialog = ref(false)
 const addressHistory = ref<any[]>([])
+
+// 替换对相关
+const showReplacementDialog = ref(false)
+const replacementTarget = ref<Device | null>(null)
+const replacementPairs = ref<ReplacementPair[]>([])
+const replacementFormData = ref({
+  original_text: '',
+  replacement_text: '',
+  enabled: true
+})
+const editingPair = ref<ReplacementPair | null>(null)
+const showReplacementForm = ref(false)
 
 // 分页
 const currentPage = ref(1)
@@ -63,6 +87,22 @@ const saveNote = async (row: Device) => {
     ElMessage.success('备注更新成功')
   } catch (error) {
     ElMessage.error('更新备注失败')
+  }
+}
+
+// 切换自动生成开关
+const toggleAutoGenerate = async (row: Device) => {
+  try {
+    // 处理 undefined 的情况，默认为 true
+    const currentValue = row.autoGenerate !== false
+    const newValue = !currentValue
+    await updateAutoGenerate(row.deviceId, newValue)
+    row.autoGenerate = newValue
+    ElMessage.success(newValue ? '已开启自动生成' : '已关闭自动生成')
+  } catch (error) {
+    ElMessage.error('更新失败')
+    // 恢复原值
+    row.autoGenerate = !row.autoGenerate
   }
 }
 
@@ -234,6 +274,106 @@ const formatTime = (timestamp: number) => {
 // 选择变化处理
 const handleSelectionChange = (val: Device[]) => {
   selectedRows.value = val
+}
+
+// 替换对管理功能
+const openReplacementDialog = async (row: Device) => {
+  replacementTarget.value = row
+  showReplacementDialog.value = true
+  showReplacementForm.value = false
+  editingPair.value = null
+  
+  // 加载该设备的替换对
+  try {
+    const { data } = await getDeviceReplacementPairs(row.deviceId)
+    replacementPairs.value = data.pairs
+  } catch (error) {
+    ElMessage.error('加载替换对失败')
+  }
+}
+
+const openReplacementForm = (pair?: ReplacementPair) => {
+  if (pair) {
+    editingPair.value = pair
+    replacementFormData.value = {
+      original_text: pair.original_text,
+      replacement_text: pair.replacement_text,
+      enabled: pair.enabled
+    }
+  } else {
+    editingPair.value = null
+    replacementFormData.value = {
+      original_text: '',
+      replacement_text: '',
+      enabled: true
+    }
+  }
+  showReplacementForm.value = true
+}
+
+const saveReplacementPair = async () => {
+  if (!replacementFormData.value.original_text || !replacementFormData.value.replacement_text) {
+    ElMessage.warning('请填写原文本和替换文本')
+    return
+  }
+  
+  try {
+    if (editingPair.value) {
+      // 更新
+      await updateReplacementPair(editingPair.value.id, replacementFormData.value)
+      ElMessage.success('更新成功')
+    } else {
+      // 创建
+      await createReplacementPair({
+        device_id: replacementTarget.value!.deviceId,
+        original_text: replacementFormData.value.original_text,
+        replacement_text: replacementFormData.value.replacement_text
+      })
+      ElMessage.success('创建成功')
+    }
+    
+    // 重新加载替换对列表
+    const { data } = await getDeviceReplacementPairs(replacementTarget.value!.deviceId)
+    replacementPairs.value = data.pairs
+    showReplacementForm.value = false
+  } catch (error) {
+    ElMessage.error(editingPair.value ? '更新失败' : '创建失败')
+  }
+}
+
+const deleteReplacementPairItem = async (pair: ReplacementPair) => {
+  try {
+    await ElMessageBox.confirm(
+      `确定要删除这个替换对吗？\n${pair.original_text} → ${pair.replacement_text}`,
+      '删除确认',
+      {
+        confirmButtonText: '删除',
+        cancelButtonText: '取消',
+        type: 'warning'
+      }
+    )
+    
+    await deleteReplacementPair(pair.id)
+    ElMessage.success('删除成功')
+    
+    // 重新加载替换对列表
+    const { data } = await getDeviceReplacementPairs(replacementTarget.value!.deviceId)
+    replacementPairs.value = data.pairs
+  } catch (error) {
+    if (error !== 'cancel') {
+      ElMessage.error('删除失败')
+    }
+  }
+}
+
+const togglePairEnabled = async (pair: ReplacementPair) => {
+  try {
+    await updateReplacementPair(pair.id, { enabled: !pair.enabled })
+    pair.enabled = !pair.enabled
+    ElMessage.success(pair.enabled ? '已启用' : '已禁用')
+  } catch (error) {
+    ElMessage.error('操作失败')
+  }
 }
 
 // 监听搜索变化，重置页码
@@ -442,6 +582,18 @@ onUnmounted(() => {
           </template>
         </el-table-column>
 
+        <el-table-column label="自动生成" width="100" align="center">
+          <template #default="{ row }">
+            <el-tooltip :content="row.autoGenerate !== false ? '收到地址时自动生成相似地址' : '不自动生成'" placement="top">
+              <el-switch 
+                :model-value="row.autoGenerate !== false"
+                @change="() => toggleAutoGenerate(row)"
+                :loading="false"
+              />
+            </el-tooltip>
+          </template>
+        </el-table-column>
+
         <el-table-column label="最后在线" width="150">
           <template #default="{ row }">
             <el-tooltip :content="new Date(row.lastSeen * 1000).toLocaleString()" placement="top">
@@ -450,7 +602,7 @@ onUnmounted(() => {
           </template>
         </el-table-column>
         
-        <el-table-column label="操作" width="240" fixed="right">
+        <el-table-column label="操作" width="320" fixed="right">
           <template #default="{ row }">
             <el-button 
               type="primary"
@@ -475,6 +627,13 @@ onUnmounted(() => {
             >
               <Clock style="margin-right: 4px;" />
               历史
+            </el-button>
+            <el-button
+              size="small"
+              @click="openReplacementDialog(row)"
+            >
+              <Switch style="margin-right: 4px;" />
+              替换对
             </el-button>
           </template>
         </el-table-column>
@@ -618,6 +777,124 @@ onUnmounted(() => {
           </template>
         </el-table-column>
       </el-table>
+    </el-dialog>
+
+    <!-- 替换对管理对话框 -->
+    <el-dialog
+      v-model="showReplacementDialog"
+      :title="`替换对管理 - ${replacementTarget?.deviceId}`"
+      width="70%"
+      top="5vh"
+    >
+      <div v-if="!showReplacementForm">
+        <!-- 工具栏 -->
+        <div style="margin-bottom: 16px;">
+          <el-button type="primary" @click="openReplacementForm()">
+            <Plus style="margin-right: 5px;" />
+            添加替换对
+          </el-button>
+        </div>
+        
+        <!-- 替换对列表 -->
+        <el-table :data="replacementPairs" style="width: 100%">
+          <el-table-column label="原文本" min-width="200" show-overflow-tooltip>
+            <template #default="{ row }">
+              <div class="text-content">
+                <span class="text-preview">{{ row.original_text }}</span>
+                <el-button 
+                  text 
+                  size="small"
+                  @click="() => navigator.clipboard.writeText(row.original_text)"
+                >
+                  <CopyDocument />
+                </el-button>
+              </div>
+            </template>
+          </el-table-column>
+          
+          <el-table-column label="替换为" min-width="200" show-overflow-tooltip>
+            <template #default="{ row }">
+              <div class="text-content">
+                <span class="text-preview">{{ row.replacement_text }}</span>
+                <el-button 
+                  text 
+                  size="small"
+                  @click="() => navigator.clipboard.writeText(row.replacement_text)"
+                >
+                  <CopyDocument />
+                </el-button>
+              </div>
+            </template>
+          </el-table-column>
+          
+          <el-table-column label="状态" width="100">
+            <template #default="{ row }">
+              <el-switch 
+                v-model="row.enabled" 
+                @change="() => togglePairEnabled(row)"
+              />
+            </template>
+          </el-table-column>
+          
+          <el-table-column label="创建时间" width="180">
+            <template #default="{ row }">
+              {{ new Date(row.created_at * 1000).toLocaleString() }}
+            </template>
+          </el-table-column>
+          
+          <el-table-column label="操作" width="120">
+            <template #default="{ row }">
+              <el-button 
+                size="small"
+                :icon="Edit"
+                @click="openReplacementForm(row)"
+              />
+              <el-button 
+                type="danger"
+                size="small"
+                :icon="Delete"
+                @click="deleteReplacementPairItem(row)"
+              />
+            </template>
+          </el-table-column>
+        </el-table>
+        
+        <el-empty v-if="replacementPairs.length === 0" description="暂无替换对" />
+      </div>
+      
+      <!-- 创建/编辑表单 -->
+      <div v-else>
+        <el-form :model="replacementFormData" label-width="100px">
+          <el-form-item label="原文本" required>
+            <el-input 
+              v-model="replacementFormData.original_text" 
+              type="textarea"
+              :rows="3"
+              placeholder="输入要替换的原文本..."
+            />
+          </el-form-item>
+          
+          <el-form-item label="替换为" required>
+            <el-input 
+              v-model="replacementFormData.replacement_text" 
+              type="textarea"
+              :rows="3"
+              placeholder="输入替换后的文本..."
+            />
+          </el-form-item>
+          
+          <el-form-item label="启用">
+            <el-switch v-model="replacementFormData.enabled" />
+          </el-form-item>
+        </el-form>
+        
+        <div style="text-align: right; margin-top: 20px;">
+          <el-button @click="showReplacementForm = false">取消</el-button>
+          <el-button type="primary" @click="saveReplacementPair">
+            {{ editingPair ? '更新' : '创建' }}
+          </el-button>
+        </div>
+      </div>
     </el-dialog>
   </div>
 </template>

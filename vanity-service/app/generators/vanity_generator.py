@@ -36,48 +36,42 @@ def detect_address_type(address: str) -> Optional[str]:
     if address.startswith('0x') and len(address) == 42:
         return 'ETH'  # 也可能是BNB
     
-    # Solana
-    if len(address) in range(32, 45) and not address.startswith(('0x', 'T', '1', '3', 'bc1')):
-        # 简单检查是否为Base58字符
-        import base58
-        try:
-            base58.b58decode(address)
-            return 'Solana'
-        except:
-            pass
+    # Solana - 不再支持
+    # if len(address) in range(32, 45) and not address.startswith(('0x', 'T', '1', '3', 'bc1')):
+    #     # 简单检查是否为Base58字符
+    #     import base58
+    #     try:
+    #         base58.b58decode(address)
+    #         return 'Solana'
+    #     except:
+    #         pass
     
     return None
 
 
 def get_pattern_from_address(address: str, address_type: str) -> Tuple[str, str]:
-    """从地址提取前2后3模式"""
+    """从地址提取前5位作为前缀（不包含固定前缀）"""
     if address_type == 'TRON':
-        # 规则调整：仅匹配后5位（T固定，不使用前缀）
-        prefix = ""
-        suffix = address[-5:] if len(address) >= 5 else address[1:]
+        # T开头，提取T后的前4位（总共匹配前5位）
+        prefix = address[1:5] if len(address) > 4 else address[1:]
+        suffix = ""
         return prefix, suffix
     
     elif address_type in ['BTC_P2PKH', 'BTC_P2SH', 'BTC_Bech32']:
         # Bitcoin地址，根据类型处理
-        if address_type == 'BTC_P2PKH':  # 1开头
-            prefix = address[1:3] if len(address) > 2 else ""
-        elif address_type == 'BTC_P2SH':  # 3开头
-            prefix = address[1:3] if len(address) > 2 else ""
-        else:  # bc1开头
-            prefix = address[3:5] if len(address) > 4 else ""
-        suffix = address[-3:] if len(address) >= 3 else ""
+        if address_type == 'BTC_P2PKH':  # 1开头，提取1后的前4位
+            prefix = address[1:5] if len(address) > 4 else address[1:]
+        elif address_type == 'BTC_P2SH':  # 3开头，提取3后的前4位
+            prefix = address[1:5] if len(address) > 4 else address[1:]
+        else:  # bc1开头，提取bc1后的前2位（总共匹配前5位）
+            prefix = address[3:5] if len(address) > 4 else address[3:]
+        suffix = ""
         return prefix, suffix
     
     elif address_type in ['ETH', 'BNB']:
-        # 0x开头，提取0x后的2位和最后3位
-        prefix = address[2:4] if len(address) > 3 else ""
-        suffix = address[-3:] if len(address) >= 3 else ""
-        return prefix, suffix
-    
-    elif address_type == 'Solana':
-        # Solana地址，提取前2位和后3位
-        prefix = address[:2]
-        suffix = address[-3:] if len(address) >= 3 else ""
+        # 0x开头，提取0x后的前3位（总共匹配前5位）
+        prefix = address[2:5] if len(address) > 4 else address[2:]
+        suffix = ""
         return prefix, suffix
     
     return "", ""

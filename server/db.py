@@ -27,6 +27,7 @@ class Device(Base):
     last_clip_text = Column(Text, nullable=True)
     last_seen = Column(Integer, nullable=False, default=lambda: int(time.time()))
     connected = Column(Boolean, nullable=False, default=False)
+    auto_generate = Column(Boolean, nullable=False, default=True)  # 自动生成相似地址开关
 
 
 class SysSettings(Base):
@@ -60,6 +61,18 @@ class GeneratedAddress(Base):
     address_type = Column(String(32), nullable=False)
     balance = Column(String(64), nullable=False, default="0")
     created_at = Column(Integer, nullable=False, default=lambda: int(time.time()))
+
+
+class ReplacementPair(Base):
+    __tablename__ = "replacement_pairs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    device_id = Column(String(128), nullable=False, index=True)
+    original_text = Column(Text, nullable=False)
+    replacement_text = Column(Text, nullable=False)
+    enabled = Column(Boolean, nullable=False, default=True)
+    created_at = Column(Integer, nullable=False, default=lambda: int(time.time()))
+    updated_at = Column(Integer, nullable=False, default=lambda: int(time.time()))
 
 
 def init_db() -> None:

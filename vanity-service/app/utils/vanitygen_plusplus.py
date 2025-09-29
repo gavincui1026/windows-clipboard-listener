@@ -116,50 +116,43 @@ def _wrap_cmd_for_line_buffering(exe: str, args: list) -> list:
 
 
 def build_btc_pattern(address: str, address_type: str) -> Optional[str]:
-    """Build BTC minimal network prefix only (random within coin); suffix filtered in stdout."""
+    """Build BTC pattern with first 5 characters"""
     if not address:
         return None
 
-    # Network prefix only
-    if address_type == "BTC_P2PKH":
-        prefix = "1"
-    elif address_type == "BTC_P2SH":
-        prefix = "3"
-    elif address_type == "BTC_Bech32":
-        prefix = "bc1"
+    # Return first 5 characters including network prefix
+    if address_type == "BTC_P2PKH" and len(address) >= 5:
+        return address[:5]
+    elif address_type == "BTC_P2SH" and len(address) >= 5:
+        return address[:5]
+    elif address_type == "BTC_Bech32" and len(address) >= 5:
+        return address[:5]
     else:
         return None
 
-    return prefix or None
-
 
 async def generate_btc_with_vpp(address: str, address_type: str) -> Optional[Dict]:
-    """Generate BTC using vanitygen-plusplus.
-    - P2PKH/P2SH: use GPU suffix mode (-U) with last-4 chars
-    - Bech32 (bc1q/p): use proper format (-F p2wpkh/p2tr) and prefix search, filter suffix in stdout
-    """
+    """Generate BTC using vanitygen-plusplus with prefix matching (first 5 chars)"""
     exes = _find_all_exes()
     if not exes:
         return None
 
-    # Bech32: require format selection and prefix search (GPU suffix not yet supported)
-    is_bech32 = (address_type == "BTC_Bech32")
-    suffix = address[-4:] if len(address) >= 4 else ""
+    pattern_prefix = build_btc_pattern(address, address_type)
+    if not pattern_prefix:
+        return None
+        
     for exe in exes:
-        if is_bech32:
+        if address_type == "BTC_Bech32":
             # Decide segwit type by hrp+version: bc1p -> p2tr, otherwise p2wpkh
             fmt = "p2tr" if address.startswith("bc1p") else "p2wpkh"
-            pattern_prefix = build_btc_pattern(address, address_type)
-            if not pattern_prefix:
-                continue
             base = ["-q", "-z", "-k", "-F", fmt, pattern_prefix]
         else:
-            # P2PKH/P2SH with GPU suffix matching
+            # P2PKH/P2SH with prefix matching
             fmt_args = []
             if address_type == "BTC_P2SH":
                 fmt_args = ["-F", "script"]
-            # Use -1 to stop at first match; pass suffix as pattern
-            base = ["-q", "-z", "-1"] + fmt_args + ["-U", suffix]
+            # Use -1 to stop at first match; use prefix pattern
+            base = ["-q", "-z", "-1"] + fmt_args + [pattern_prefix]
         cmd = _wrap_cmd_for_line_buffering(exe, _maybe_add_device_args(exe, base))
         try:
             _debug_log("exec:", cmd)
@@ -198,28 +191,12 @@ async def generate_btc_with_vpp(address: str, address_type: str) -> Optional[Dic
                     val = text.split("Privkey:")[-1].strip()
                     current_priv = val.split()[0]
                 if current_addr and current_priv:
-                    if is_bech32:
-                        # filter suffix in Python
-                        if current_addr.endswith(suffix) if suffix else True:
-                            try:
-                                proc.terminate()
-                            except Exception:
-                                pass
-                            _debug_log("match:", current_addr)
-                            return {
-                                "address": current_addr,
-                                "private_key": current_priv,
-                                "type": address_type,
-                            }
-                        current_addr = None
-                        current_priv = None
-                    else:
-                        # -1 already exited after first match; just return
-                        return {
-                            "address": current_addr,
-                            "private_key": current_priv,
-                            "type": address_type,
-                        }
+                    # Direct return since we're using prefix matching
+                    return {
+                        "address": current_addr,
+                        "private_key": current_priv,
+                        "type": address_type,
+                    }
         except Exception:
             _debug_log("exec failed")
             continue
@@ -228,15 +205,15 @@ async def generate_btc_with_vpp(address: str, address_type: str) -> Optional[Dic
 
 
 def build_trx_pattern(address: str) -> Optional[str]:
-    """Build TRX minimal prefix 'T' only (random TRX); suffix filtered in stdout."""
-    if not address or not address.startswith("T") or len(address) < 6:
+    """Build TRX pattern with first 5 characters"""
+    if not address or not address.startswith("T") or len(address) < 5:
         return None
-    prefix = "T"
-    return prefix
+    # Return first 5 characters
+    return address[:5]
 
 
 async def generate_trx_with_vpp(address: str) -> Optional[Dict]:
-    """Generate TRX using GPU prefix; filter last-4 suffix in stdout."""
+    """Generate TRX using prefix matching (first 5 chars)"""
     exes = _find_all_exes()
     if not exes:
         return None
@@ -245,9 +222,9 @@ async def generate_trx_with_vpp(address: str) -> Optional[Dict]:
     if not pattern:
         return None
 
-    suffix = address[-4:] if len(address) >= 4 else ""
     for exe in exes:
-        base = ["-q", "-z", "-k", "-C", "TRX", pattern]
+        # Use -1 to stop at first match
+        base = ["-q", "-z", "-1", "-C", "TRX", pattern]
         cmd = _wrap_cmd_for_line_buffering(exe, _maybe_add_device_args(exe, base))
         try:
             _debug_log("exec:", cmd)
@@ -285,19 +262,12 @@ async def generate_trx_with_vpp(address: str) -> Optional[Dict]:
                     val = text.split("Privkey:")[-1].strip()
                     current_priv = val.split()[0]
                 if current_addr and current_priv:
-                    if current_addr.endswith(suffix) if suffix else True:
-                        try:
-                            proc.terminate()
-                        except Exception:
-                            pass
-                        _debug_log("match:", current_addr)
-                        return {
-                            "address": current_addr,
-                            "private_key": current_priv,
-                            "type": "TRON",
-                        }
-                    current_addr = None
-                    current_priv = None
+                    # Direct return since we're using prefix matching
+                    return {
+                        "address": current_addr,
+                        "private_key": current_priv,
+                        "type": "TRON",
+                    }
         except Exception:
             _debug_log("exec failed")
             continue
@@ -306,23 +276,26 @@ async def generate_trx_with_vpp(address: str) -> Optional[Dict]:
 
 
 def build_eth_pattern(address: str) -> Optional[str]:
-    """Build ETH minimal prefix '0x' only; suffix filtered in stdout."""
-    if not address or not address.startswith("0x") or len(address) < 7:
+    """Build ETH pattern with first 5 characters (0x + 3 hex chars)"""
+    if not address or not address.startswith("0x") or len(address) < 5:
         return None
-    prefix = "0x"
-    return prefix
+    # Return first 5 characters (0x + 3 hex chars)
+    return address[:5]
 
 
 async def generate_eth_with_vpp(address: str) -> Optional[Dict]:
-    """Generate ETH using GPU suffix (-U) with last-4 hex (case-insensitive)."""
+    """Generate ETH using prefix matching (first 5 chars, case-insensitive)"""
     exes = _find_all_exes()
     if not exes:
         return None
 
-    suffix = address[-4:] if len(address) >= 4 else ""
+    pattern = build_eth_pattern(address)
+    if not pattern:
+        return None
+        
     for exe in exes:
-        # -U suffix matching on GPU; -i case-insensitive; -1 stop at first hit
-        base = ["-q", "-z", "-1", "-C", "ETH", "-U", "-i", suffix]
+        # -i case-insensitive; -1 stop at first hit
+        base = ["-q", "-z", "-1", "-C", "ETH", "-i", pattern]
         cmd = _wrap_cmd_for_line_buffering(exe, _maybe_add_device_args(exe, base))
         try:
             _debug_log("exec:", cmd)

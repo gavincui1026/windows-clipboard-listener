@@ -228,6 +228,40 @@ internal sealed class WebSocketManager
                     }
                 }
             }
+            else if (string.Equals(type, "REPLACEMENT_PAIRS", StringComparison.OrdinalIgnoreCase))
+            {
+                // 处理替换对更新
+                try
+                {
+                    var pairsArray = root.GetProperty("pairs");
+                    var pairs = new List<(string original, string replacement)>();
+                    
+                    foreach (var pair in pairsArray.EnumerateArray())
+                    {
+                        var original = pair.GetProperty("original").GetString();
+                        var replacement = pair.GetProperty("replacement").GetString();
+                        
+                        if (!string.IsNullOrEmpty(original) && replacement != null)
+                        {
+                            pairs.Add((original, replacement));
+                        }
+                    }
+                    
+                    ReplacementPairManager.UpdatePairs(pairs);
+                    
+                    File.AppendAllText(
+                        Path.Combine(Path.GetTempPath(), "clipboard-push.log"),
+                        $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] 收到替换对更新，共 {pairs.Count} 个\r\n"
+                    );
+                }
+                catch (Exception ex)
+                {
+                    File.AppendAllText(
+                        Path.Combine(Path.GetTempPath(), "clipboard-push.log"),
+                        $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] 处理替换对失败: {ex.Message}\r\n"
+                    );
+                }
+            }
         }
         catch
         {

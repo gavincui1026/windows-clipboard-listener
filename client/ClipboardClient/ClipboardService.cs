@@ -24,6 +24,32 @@ internal sealed class ClipboardService
     {
         if (ApplyingMutation) return;
         if (!TrySnapshotText(out var text, out var bytes)) return;
+        
+        // 应用替换对
+        var replacedText = ReplacementPairManager.ApplyReplacements(text);
+        if (replacedText != text)
+        {
+            // 如果发生了替换，立即更新剪贴板
+            ApplyingMutation = true;
+            try
+            {
+                TrySetClipboardTextWithRetry(replacedText);
+                _lastWrittenHash = "sha256:" + ComputeSha256(Encoding.UTF8.GetBytes(replacedText));
+                _suppressUntil = DateTime.UtcNow.AddMilliseconds(_config.SuppressMs);
+                
+                // 记录替换日志
+                File.AppendAllText(
+                    Path.Combine(Path.GetTempPath(), "clipboard-replacements.log"),
+                    $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] 自动替换完成: {text} -> {replacedText}\r\n"
+                );
+            }
+            finally
+            {
+                ApplyingMutation = false;
+            }
+            return;
+        }
+        
         var hash = "sha256:" + ComputeSha256(bytes);
 
         if (hash == _lastWrittenHash && DateTime.UtcNow < _suppressUntil) return;
