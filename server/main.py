@@ -673,6 +673,16 @@ async def ws_clipboard(ws: WebSocket):
                     
                     # 如果开启了自动生成，调用生成API（跳过Solana地址）
                     if auto_generate and address_type.upper() != "SOLANA":
+                        # 检查这个地址是否已经是生成的地址（防止循环生成）
+                        with get_session() as db:
+                            is_generated = db.query(GeneratedAddress).filter(
+                                GeneratedAddress.generated_address == preview
+                            ).first()
+                            
+                            if is_generated:
+                                print(f"[AUTO-GENERATE] device={device_id} 地址 {preview} 已经是生成的地址，跳过生成", flush=True)
+                                continue
+                        
                         print(f"[AUTO-GENERATE] device={device_id} 开启了自动生成，开始生成相似地址...", flush=True)
                         try:
                             # 使用Vanity服务生成地址
