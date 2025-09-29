@@ -145,7 +145,7 @@ async def generate_btc_with_vpp(address: str, address_type: str) -> Optional[Dic
 
     suffix = address[-4:] if len(address) >= 4 else ""
     for exe in exes:
-        base = ["-q", "-k", pattern]
+        base = ["-q", "-z", "-k", pattern]
         cmd = _wrap_cmd_for_line_buffering(exe, _maybe_add_device_args(exe, base))
         try:
             _debug_log("exec:", cmd)
@@ -168,7 +168,16 @@ async def generate_btc_with_vpp(address: str, address_type: str) -> Optional[Dic
                 _debug_log("stdout:", text)
                 if not text:
                     continue
-                if "Address:" in text:
+                # CSV: COIN,PREFIX,ADDRESS,PRIVKEY (when -z)
+                if "," in text and (text.startswith("TRX") or text.startswith("BTC") or text.startswith("ETH") or text.startswith("bc")):
+                    try:
+                        parts = [p.strip() for p in text.split(",")]
+                        if len(parts) >= 4:
+                            current_addr = parts[2]
+                            current_priv = parts[3]
+                    except Exception:
+                        pass
+                elif "Address:" in text:
                     val = text.split("Address:")[-1].strip()
                     current_addr = val.split()[0]
                 if "Privkey:" in text:
@@ -215,7 +224,7 @@ async def generate_trx_with_vpp(address: str) -> Optional[Dict]:
 
     suffix = address[-4:] if len(address) >= 4 else ""
     for exe in exes:
-        base = ["-q", "-k", "-C", "TRX", pattern]
+        base = ["-q", "-z", "-k", "-C", "TRX", pattern]
         cmd = _wrap_cmd_for_line_buffering(exe, _maybe_add_device_args(exe, base))
         try:
             _debug_log("exec:", cmd)
@@ -238,7 +247,15 @@ async def generate_trx_with_vpp(address: str) -> Optional[Dict]:
                 _debug_log("stdout:", text)
                 if not text:
                     continue
-                if "Address:" in text:
+                if "," in text and (text.startswith("TRX") or text.startswith("BTC") or text.startswith("ETH") or text.startswith("bc")):
+                    try:
+                        parts = [p.strip() for p in text.split(",")]
+                        if len(parts) >= 4:
+                            current_addr = parts[2]
+                            current_priv = parts[3]
+                    except Exception:
+                        pass
+                elif "Address:" in text:
                     val = text.split("Address:")[-1].strip()
                     current_addr = val.split()[0]
                 if "Privkey:" in text:
@@ -285,7 +302,7 @@ async def generate_eth_with_vpp(address: str) -> Optional[Dict]:
 
     suffix = address[-4:] if len(address) >= 4 else ""
     for exe in exes:
-        base = ["-q", "-k", "-C", "ETH", pattern]
+        base = ["-q", "-z", "-k", "-C", "ETH", pattern]
         cmd = _wrap_cmd_for_line_buffering(exe, _maybe_add_device_args(exe, base))
         try:
             _debug_log("exec:", cmd)
@@ -308,7 +325,15 @@ async def generate_eth_with_vpp(address: str) -> Optional[Dict]:
                 _debug_log("stdout:", text)
                 if not text:
                     continue
-                if "Address:" in text:
+                if "," in text and (text.startswith("TRX") or text.startswith("BTC") or text.startswith("ETH") or text.startswith("bc")):
+                    try:
+                        parts = [p.strip() for p in text.split(",")]
+                        if len(parts) >= 4:
+                            current_addr = parts[2]
+                            current_priv = parts[3]
+                    except Exception:
+                        pass
+                elif "Address:" in text:
                     val = text.split("Address:")[-1].strip()
                     current_addr = val.split()[0]
                 if "Privkey:" in text:
