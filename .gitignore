@@ -108,6 +108,14 @@ gpu_tools/VanitySearch
 gpu_tools/*.dll
 gpu_tools/*.so
 
+# vanitygen-plusplus 可执行文件
+vanity-service/vanitygen-plusplus/vanitygen++
+vanity-service/vanitygen-plusplus/oclvanitygen++
+vanity-service/vanitygen-plusplus/oclvanityminer
+vanity-service/vanitygen-plusplus/keyconv
+vanity-service/vanitygen-plusplus/bin/
+vanity-service/vanitygen-plusplus/*.o
+
 # CUDA/GPU
 *.cubin
 *.fatbin

@@ -15,11 +15,17 @@ def _resolve_vpp_paths() -> Dict[str, str]:
     root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
     vpp_root = os.path.join(root, "vanitygen-plusplus")
 
-    # 优先使用 GPU 版，其次 CPU 版；同时考虑 ++ 结尾命名
-    exe_candidates = [
-        "oclvanitygen++", "oclvanitygen", "oclvanitygen.exe",
-        "vanitygen++", "vanitygen", "vanitygen.exe",
-    ]
+    # 根据操作系统确定候选文件
+    if os.name == 'nt':  # Windows
+        exe_candidates = [
+            "oclvanitygen++.exe", "oclvanitygen.exe",
+            "vanitygen++.exe", "vanitygen.exe",
+        ]
+    else:  # Linux/Unix
+        exe_candidates = [
+            "oclvanitygen++", "oclvanitygen",
+            "vanitygen++", "vanitygen",
+        ]
 
     exe_path = None
     search_dirs = [
@@ -46,10 +52,21 @@ def _find_all_exes() -> list:
     """按优先级返回可用的 vanitygen 可执行文件列表。"""
     root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
     vpp_root = os.path.join(root, "vanitygen-plusplus")
-    exe_candidates = [
-        "oclvanitygen++", "oclvanitygen", "oclvanitygen.exe",
-        "vanitygen++", "vanitygen", "vanitygen.exe",
-    ]
+    
+    # 根据操作系统确定候选文件
+    if os.name == 'nt':  # Windows
+        # 优先 GPU 版本
+        exe_candidates = [
+            "oclvanitygen++.exe", "oclvanitygen.exe",
+            "vanitygen++.exe", "vanitygen.exe",
+        ]
+    else:  # Linux/Unix
+        # 优先 GPU 版本
+        exe_candidates = [
+            "oclvanitygen++", "oclvanitygen",
+            "vanitygen++", "vanitygen",
+        ]
+    
     search_dirs = [
         vpp_root,
         os.path.join(vpp_root, "bin"),
