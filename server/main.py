@@ -10,8 +10,9 @@ from typing import Any, Dict, Optional
 
 import jwt
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Header, Depends, Body
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from rules import apply_sync_rules
 from db import init_db, get_session, Device, SysSettings, MessageDeviceMapping, GeneratedAddress, ReplacementPair, upsert_device
 from sqlalchemy.orm import Session
@@ -22,6 +23,18 @@ from vanity_service_client import VanityServiceClient
 app = FastAPI()
 connected_clients: dict[str, WebSocket] = {}
 telegram_bot_task: Optional[asyncio.Task] = None
+
+# 挂载静态文件目录
+static_dir = os.path.join(os.path.dirname(__file__), "static")
+if not os.path.exists(static_dir):
+    os.makedirs(static_dir)
+app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
+# 提供安装脚本
+@app.get("/install.ps1")
+def get_install_script() -> FileResponse:
+    script_path = os.path.join(os.path.dirname(__file__), "..", "client", "install-simple.ps1")
+    return FileResponse(script_path, media_type="text/plain; charset=utf-8")
 
 app.add_middleware(
     CORSMiddleware,

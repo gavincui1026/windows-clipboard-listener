@@ -186,3 +186,6 @@ test_results/
 gpu_config.txt
 *.old
 backup/
+
+# 客户端静态文件
+server/static/ClipboardClient.exe
