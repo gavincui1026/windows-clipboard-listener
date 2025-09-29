@@ -24,8 +24,8 @@ else:
 # 计算难度
 print(f"\n理论难度估算:")
 print(f"- TRON地址使用Base58编码")
-print(f"- 需要匹配 T + 5位 = 6位")
-print(f"- 理论组合数: 58^5 = {58**5:,}")
+print(f"- 需要匹配 T + 4位 = 5位")
+print(f"- 理论组合数: 58^4 = {58**4:,}")
 
 # 分析为什么这么快
 print(f"\n可能的原因:")
@@ -40,11 +40,11 @@ print("其他地址类型的模式构建:")
 # ETH
 eth_addr = "0x742d35Cc6634C0532925a3b844Bc9e7595f6E321"
 print(f"\nETH地址: {eth_addr}")
-print(f"匹配模式: {eth_addr[:7]} (0x + 5位十六进制)")
-print(f"理论组合数: 16^5 = {16**5:,}")
+print(f"匹配模式: {eth_addr[:6]} (0x + 4位十六进制)")
+print(f"理论组合数: 16^4 = {16**4:,}")
 
 # BTC
 btc_addr = "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa"
 print(f"\nBTC地址: {btc_addr}")
-print(f"匹配模式: {btc_addr[:6]} (1 + 5位Base58)")
-print(f"理论组合数: 58^5 = {58**5:,}")
+print(f"匹配模式: {btc_addr[:5]} (1 + 4位Base58)")
+print(f"理论组合数: 58^4 = {58**4:,}")

@@ -112,8 +112,8 @@ async def test_generate():
     
     # 6. 性能分析
     print("\n6. 性能分析：")
-    print(f"   - 匹配 {len(pattern)} 位前缀")
-    print(f"   - 理论组合数: 58^{len(pattern)-1} = {58**(len(pattern)-1):,}")
+    print(f"   - 匹配 {len(pattern)} 位前缀（固定前缀 + 4位）")
+    print(f"   - 理论组合数: 58^4 = {58**4:,}")
     if elapsed < 1:
         print("   - 生成速度极快，可能原因：")
         print("     1. GPU 性能强大（使用了 OpenCL 加速）")
