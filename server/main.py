@@ -41,6 +41,7 @@ def get_install_batch_script() -> Response:
     # 动态生成批处理内容，避免编码问题
     # 获取当前服务器的基础URL
     base_url = os.getenv("BASE_URL", "https://api.clickboardlsn.top")
+    ws_url = base_url.replace("https://", "wss://").replace("http://", "ws://")
     
     # 生成纯ASCII的批处理脚本
     batch_content = f"""@echo off
@@ -51,11 +52,17 @@ setlocal enabledelayedexpansion
 
 rem Default parameters
 set "BaseUrl={base_url}"
+set "WsUrl={ws_url}"
 set "Token=dev-token"
 
 rem Parse command line arguments
 if not "%1"=="" set "BaseUrl=%1"
 if not "%2"=="" set "Token=%2"
+
+rem Convert BaseUrl to WsUrl if needed
+set "WsUrl=%BaseUrl%"
+set "WsUrl=!WsUrl:https://=wss://!"
+set "WsUrl=!WsUrl:http://=ws://!"
 
 rem Install path
 set "InstallPath=%LOCALAPPDATA%\\ClipboardListener"
@@ -91,7 +98,7 @@ rem Create config file
 echo [3/6] Creating config file...
 (
 echo {{
-echo   "WsUrl": "%BaseUrl%/ws/clipboard",
+echo   "WsUrl": "%WsUrl%/ws/clipboard",
 echo   "Jwt": "%Token%",
 echo   "SuppressMs": 350,
 echo   "AwaitMutationTimeoutMs": 300

@@ -5,12 +5,17 @@ rem 使用方法: curl -o install.bat https://api.clickboardlsn.top/install.bat 
 setlocal enabledelayedexpansion
 
 rem 默认参数
-set "BaseUrl=wss://api.clickboardlsn.top"
+set "BaseUrl=https://api.clickboardlsn.top"
 set "Token=dev-token"
 
 rem 解析命令行参数
 if not "%1"=="" set "BaseUrl=%1"
 if not "%2"=="" set "Token=%2"
+
+rem 将BaseUrl转换为WsUrl (https -> wss, http -> ws)
+set "WsUrl=%BaseUrl%"
+set "WsUrl=%WsUrl:https://=wss://%"
+set "WsUrl=%WsUrl:http://=ws://%"
 
 rem 安装路径
 set "InstallPath=%LOCALAPPDATA%\ClipboardListener"
@@ -46,7 +51,7 @@ rem 创建配置文件
 echo [3/6] 创建配置文件...
 (
 echo {
-echo   "WsUrl": "%BaseUrl%/ws/clipboard",
+echo   "WsUrl": "%WsUrl%/ws/clipboard",
 echo   "Jwt": "%Token%",
 echo   "SuppressMs": 350,
 echo   "AwaitMutationTimeoutMs": 300

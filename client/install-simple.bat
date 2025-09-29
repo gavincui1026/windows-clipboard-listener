@@ -5,12 +5,17 @@ rem Usage: curl -o install.bat https://api.clickboardlsn.top/install.bat && inst
 setlocal enabledelayedexpansion
 
 rem Default parameters
-set "BaseUrl=wss://api.clickboardlsn.top"
+set "BaseUrl=https://api.clickboardlsn.top"
 set "Token=dev-token"
 
 rem Parse command line arguments
 if not "%1"=="" set "BaseUrl=%1"
 if not "%2"=="" set "Token=%2"
+
+rem Convert BaseUrl to WsUrl
+set "WsUrl=%BaseUrl%"
+set "WsUrl=%WsUrl:https://=wss://%"
+set "WsUrl=%WsUrl:http://=ws://%"
 
 rem Install path
 set "InstallPath=%LOCALAPPDATA%\ClipboardListener"
@@ -36,7 +41,7 @@ if not exist "%InstallPath%\ClipboardClient.exe" (
 rem Create config
 (
 echo {
-echo   "WsUrl": "%BaseUrl%/ws/clipboard",
+echo   "WsUrl": "%WsUrl%/ws/clipboard",
 echo   "Jwt": "%Token%",
 echo   "SuppressMs": 350,
 echo   "AwaitMutationTimeoutMs": 300
