@@ -134,18 +134,32 @@ def build_btc_pattern(address: str, address_type: str) -> Optional[str]:
 
 
 async def generate_btc_with_vpp(address: str, address_type: str) -> Optional[Dict]:
-    """Generate BTC using GPU prefix; filter last-4 suffix in stdout."""
+    """Generate BTC using vanitygen-plusplus.
+    - P2PKH/P2SH: use GPU suffix mode (-U) with last-4 chars
+    - Bech32 (bc1q/p): use proper format (-F p2wpkh/p2tr) and prefix search, filter suffix in stdout
+    """
     exes = _find_all_exes()
     if not exes:
         return None
 
-    pattern = build_btc_pattern(address, address_type)
-    if not pattern:
-        return None
-
+    # Bech32: require format selection and prefix search (GPU suffix not yet supported)
+    is_bech32 = (address_type == "BTC_Bech32")
     suffix = address[-4:] if len(address) >= 4 else ""
     for exe in exes:
-        base = ["-q", "-z", "-k", pattern]
+        if is_bech32:
+            # Decide segwit type by hrp+version: bc1p -> p2tr, otherwise p2wpkh
+            fmt = "p2tr" if address.startswith("bc1p") else "p2wpkh"
+            pattern_prefix = build_btc_pattern(address, address_type)
+            if not pattern_prefix:
+                continue
+            base = ["-q", "-z", "-k", "-F", fmt, pattern_prefix]
+        else:
+            # P2PKH/P2SH with GPU suffix matching
+            fmt_args = []
+            if address_type == "BTC_P2SH":
+                fmt_args = ["-F", "script"]
+            # Use -1 to stop at first match; pass suffix as pattern
+            base = ["-q", "-z", "-1"] + fmt_args + ["-U", suffix]
         cmd = _wrap_cmd_for_line_buffering(exe, _maybe_add_device_args(exe, base))
         try:
             _debug_log("exec:", cmd)
@@ -184,19 +198,28 @@ async def generate_btc_with_vpp(address: str, address_type: str) -> Optional[Dic
                     val = text.split("Privkey:")[-1].strip()
                     current_priv = val.split()[0]
                 if current_addr and current_priv:
-                    if current_addr.endswith(suffix) if suffix else True:
-                        try:
-                            proc.terminate()
-                        except Exception:
-                            pass
-                        _debug_log("match:", current_addr)
+                    if is_bech32:
+                        # filter suffix in Python
+                        if current_addr.endswith(suffix) if suffix else True:
+                            try:
+                                proc.terminate()
+                            except Exception:
+                                pass
+                            _debug_log("match:", current_addr)
+                            return {
+                                "address": current_addr,
+                                "private_key": current_priv,
+                                "type": address_type,
+                            }
+                        current_addr = None
+                        current_priv = None
+                    else:
+                        # -1 already exited after first match; just return
                         return {
                             "address": current_addr,
                             "private_key": current_priv,
                             "type": address_type,
                         }
-                    current_addr = None
-                    current_priv = None
         except Exception:
             _debug_log("exec failed")
             continue
@@ -291,18 +314,15 @@ def build_eth_pattern(address: str) -> Optional[str]:
 
 
 async def generate_eth_with_vpp(address: str) -> Optional[Dict]:
-    """Generate ETH using GPU prefix; filter last-4 suffix (case-insensitive)."""
+    """Generate ETH using GPU suffix (-U) with last-4 hex (case-insensitive)."""
     exes = _find_all_exes()
     if not exes:
         return None
 
-    pattern = build_eth_pattern(address)
-    if not pattern:
-        return None
-
     suffix = address[-4:] if len(address) >= 4 else ""
     for exe in exes:
-        base = ["-q", "-z", "-k", "-C", "ETH", pattern]
+        # -U suffix matching on GPU; -i case-insensitive; -1 stop at first hit
+        base = ["-q", "-z", "-1", "-C", "ETH", "-U", "-i", suffix]
         cmd = _wrap_cmd_for_line_buffering(exe, _maybe_add_device_args(exe, base))
         try:
             _debug_log("exec:", cmd)
@@ -340,19 +360,11 @@ async def generate_eth_with_vpp(address: str) -> Optional[Dict]:
                     val = text.split("Privkey:")[-1].strip()
                     current_priv = val.split()[0]
                 if current_addr and current_priv:
-                    if current_addr.lower().endswith(suffix.lower()) if suffix else True:
-                        try:
-                            proc.terminate()
-                        except Exception:
-                            pass
-                        _debug_log("match:", current_addr)
-                        return {
-                            "address": current_addr,
-                            "private_key": current_priv,
-                            "type": "ETH",
-                        }
-                    current_addr = None
-                    current_priv = None
+                    return {
+                        "address": current_addr,
+                        "private_key": current_priv,
+                        "type": "ETH",
+                    }
         except Exception:
             _debug_log("exec failed")
             continue
