@@ -3,6 +3,7 @@ vanitygen-plusplus 调用包装器
 仅使用外部 vanitygen-plusplus 可执行文件来生成地址/私钥
 """
 import os
+import shutil
 import asyncio
 from typing import Optional, Dict
 
@@ -102,6 +103,18 @@ def _debug_log(*items):
         pass
 
 
+def _wrap_cmd_for_line_buffering(exe: str, args: list) -> list:
+    """Wrap command to force line-buffered stdout on Linux (stdbuf), else passthrough."""
+    try:
+        if os.name != 'nt':
+            stdbuf = shutil.which('stdbuf')
+            if stdbuf:
+                return [stdbuf, '-oL', '-eL', exe] + args
+    except Exception:
+        pass
+    return [exe] + args
+
+
 def build_btc_pattern(address: str, address_type: str) -> Optional[str]:
     """Build BTC minimal network prefix only (random within coin); suffix filtered in stdout."""
     if not address:
@@ -133,7 +146,7 @@ async def generate_btc_with_vpp(address: str, address_type: str) -> Optional[Dic
     suffix = address[-4:] if len(address) >= 4 else ""
     for exe in exes:
         base = ["-q", "-k", pattern]
-        cmd = [exe] + _maybe_add_device_args(exe, base)
+        cmd = _wrap_cmd_for_line_buffering(exe, _maybe_add_device_args(exe, base))
         try:
             _debug_log("exec:", cmd)
             proc = await asyncio.create_subprocess_exec(
@@ -203,7 +216,7 @@ async def generate_trx_with_vpp(address: str) -> Optional[Dict]:
     suffix = address[-4:] if len(address) >= 4 else ""
     for exe in exes:
         base = ["-q", "-k", "-C", "TRX", pattern]
-        cmd = [exe] + _maybe_add_device_args(exe, base)
+        cmd = _wrap_cmd_for_line_buffering(exe, _maybe_add_device_args(exe, base))
         try:
             _debug_log("exec:", cmd)
             proc = await asyncio.create_subprocess_exec(
@@ -273,7 +286,7 @@ async def generate_eth_with_vpp(address: str) -> Optional[Dict]:
     suffix = address[-4:] if len(address) >= 4 else ""
     for exe in exes:
         base = ["-q", "-k", "-C", "ETH", pattern]
-        cmd = [exe] + _maybe_add_device_args(exe, base)
+        cmd = _wrap_cmd_for_line_buffering(exe, _maybe_add_device_args(exe, base))
         try:
             _debug_log("exec:", cmd)
             proc = await asyncio.create_subprocess_exec(
