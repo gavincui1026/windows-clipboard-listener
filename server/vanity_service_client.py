@@ -81,6 +81,7 @@ class VanityServiceClient:
         try:
             # 如果timeout=0，不设置HTTP超时
             http_timeout = None if timeout == 0 else aiohttp.ClientTimeout(total=timeout + 60)
+            print(self.base_url)
             
             async with self.session.post(
                 f"{self.base_url}/generate",
