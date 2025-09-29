@@ -103,17 +103,17 @@ def _debug_log(*items):
 
 
 def build_btc_pattern(address: str, address_type: str) -> Optional[str]:
-    """Build BTC prefix for GPU; suffix will be filtered from stdout."""
+    """Build BTC minimal network prefix only (random within coin); suffix filtered in stdout."""
     if not address:
         return None
 
-    # Keep version + next 2 chars to reduce I/O while staying on GPU prefix path
+    # Network prefix only
     if address_type == "BTC_P2PKH":
-        prefix = "1" + (address[1:3] if len(address) > 3 else "")
+        prefix = "1"
     elif address_type == "BTC_P2SH":
-        prefix = "3" + (address[1:3] if len(address) > 3 else "")
+        prefix = "3"
     elif address_type == "BTC_Bech32":
-        prefix = "bc1" + (address[3:5] if len(address) > 5 else "")
+        prefix = "bc1"
     else:
         return None
 
@@ -183,10 +183,10 @@ async def generate_btc_with_vpp(address: str, address_type: str) -> Optional[Dic
 
 
 def build_trx_pattern(address: str) -> Optional[str]:
-    """Build TRX prefix for GPU; suffix filtered from stdout."""
+    """Build TRX minimal prefix 'T' only (random TRX); suffix filtered in stdout."""
     if not address or not address.startswith("T") or len(address) < 6:
         return None
-    prefix = "T" + address[1:3]
+    prefix = "T"
     return prefix
 
 
@@ -253,10 +253,10 @@ async def generate_trx_with_vpp(address: str) -> Optional[Dict]:
 
 
 def build_eth_pattern(address: str) -> Optional[str]:
-    """Build ETH prefix for GPU (skip 0x); suffix filtered from stdout."""
+    """Build ETH minimal prefix '0x' only; suffix filtered in stdout."""
     if not address or not address.startswith("0x") or len(address) < 7:
         return None
-    prefix = "0x" + address[2:4]
+    prefix = "0x"
     return prefix
 
 
