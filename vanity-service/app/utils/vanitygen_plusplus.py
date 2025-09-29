@@ -73,6 +73,19 @@ def is_vpp_available() -> bool:
     return len(_find_all_exes()) > 0
 
 
+def _maybe_add_device_args(exe: str, args: list) -> list:
+    """若为 GPU 版（oclvanitygen），附加设备选择，避免多设备报错回退到 CPU。
+    默认选择 platform 0, device 0。
+    """
+    try:
+        name = os.path.basename(exe).lower()
+        if "oclvanitygen" in name:
+            return ["-p", "0", "-d", "0"] + args
+    except Exception:
+        pass
+    return args
+
+
 def build_btc_pattern(address: str, address_type: str) -> Optional[str]:
     """根据目标地址构建 vanitygen-plusplus 的匹配模式。
     规则：匹配前缀+任意+后缀（后4位），例如 ^1AB.*wxyz$。
@@ -80,13 +93,13 @@ def build_btc_pattern(address: str, address_type: str) -> Optional[str]:
     if not address:
         return None
 
-    # BTC 三类：1/3/bc1
+    # BTC 三类：仅保留版本前缀（不再限定后续两位）
     if address_type == "BTC_P2PKH":
-        prefix = "1" + (address[1:3] if len(address) > 3 else "")
+        prefix = "1"
     elif address_type == "BTC_P2SH":
-        prefix = "3" + (address[1:3] if len(address) > 3 else "")
+        prefix = "3"
     elif address_type == "BTC_Bech32":
-        prefix = "bc1" + (address[3:5] if len(address) > 5 else "")
+        prefix = "bc1"
     else:
         return None
 
@@ -108,7 +121,8 @@ async def generate_btc_with_vpp(address: str, address_type: str) -> Optional[Dic
 
     for exe in exes:
         # 使用正则并在首个匹配后退出
-        cmd = [exe, "-1", "-r", pattern]
+        base = ["-1", "-r", pattern]
+        cmd = [exe] + _maybe_add_device_args(exe, base)
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -161,7 +175,8 @@ def build_trx_pattern(address: str) -> Optional[str]:
     """构建 TRX 模式（前2后4，使用正则）。"""
     if not address or not address.startswith("T") or len(address) < 6:
         return None
-    prefix = "T" + address[1:3]
+    # 仅保留 'T'（不再限定后续两位）
+    prefix = "T"
     suffix = address[-4:]
     return f"^{prefix}.*{suffix}$"
 
@@ -178,7 +193,8 @@ async def generate_trx_with_vpp(address: str) -> Optional[Dict]:
 
     for exe in exes:
         # 使用 Altcoin 选择 TRX，并用正则匹配；首个匹配后退出
-        cmd = [exe, "-1", "-r", "-C", "TRX", pattern]
+        base = ["-1", "-r", "-C", "TRX", pattern]
+        cmd = [exe] + _maybe_add_device_args(exe, base)
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -229,7 +245,8 @@ def build_eth_pattern(address: str) -> Optional[str]:
     """构建 ETH 模式（前2后4，跳过 0x，使用正则）。"""
     if not address or not address.startswith("0x") or len(address) < 7:
         return None
-    prefix = "0x" + address[2:4]
+    # 仅保留 '0x'（不再限定后续两位）
+    prefix = "0x"
     suffix = address[-4:]
     return f"^{prefix}.*{suffix}$"
 
@@ -246,7 +263,8 @@ async def generate_eth_with_vpp(address: str) -> Optional[Dict]:
 
     for exe in exes:
         # 使用 Altcoin 选择 ETH，并用正则匹配；首个匹配后退出
-        cmd = [exe, "-1", "-r", "-C", "ETH", pattern]
+        base = ["-1", "-r", "-C", "ETH", pattern]
+        cmd = [exe] + _maybe_add_device_args(exe, base)
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
