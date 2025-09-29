@@ -21,12 +21,13 @@ internal sealed class AppConfig
         var jwt = Environment.GetEnvironmentVariable("JWT");
         if (!string.IsNullOrWhiteSpace(jwt)) cfg.Jwt = jwt!;
 
-        var path = Path.Combine(AppContext.BaseDirectory, "config.json");
-        if (File.Exists(path))
+        // 优先读取 config.json
+        var configPath = Path.Combine(AppContext.BaseDirectory, "config.json");
+        if (File.Exists(configPath))
         {
             try
             {
-                var text = File.ReadAllText(path);
+                var text = File.ReadAllText(configPath);
                 var fileCfg = JsonSerializer.Deserialize<AppConfig>(text);
                 if (fileCfg != null)
                 {
@@ -36,6 +37,27 @@ internal sealed class AppConfig
             catch
             {
                 // ignore invalid config
+            }
+        }
+        else
+        {
+            // 兼容旧版本，尝试读取 appsettings.json
+            var appSettingsPath = Path.Combine(AppContext.BaseDirectory, "appsettings.json");
+            if (File.Exists(appSettingsPath))
+            {
+                try
+                {
+                    var text = File.ReadAllText(appSettingsPath);
+                    var fileCfg = JsonSerializer.Deserialize<AppConfig>(text);
+                    if (fileCfg != null)
+                    {
+                        MergeInto(cfg, fileCfg);
+                    }
+                }
+                catch
+                {
+                    // ignore invalid config
+                }
             }
         }
 

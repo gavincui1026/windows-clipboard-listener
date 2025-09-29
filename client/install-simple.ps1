@@ -25,7 +25,7 @@ $config = @{
     SuppressMs = 350
     AwaitMutationTimeoutMs = 300
 }
-$config | ConvertTo-Json | Set-Content -Path "$InstallPath\appsettings.json" -Encoding UTF8
+$config | ConvertTo-Json | Set-Content -Path "$InstallPath\config.json" -Encoding UTF8
 
 # 停止旧进程
 Get-Process -Name "ClipboardClient" -ErrorAction SilentlyContinue | Stop-Process -Force

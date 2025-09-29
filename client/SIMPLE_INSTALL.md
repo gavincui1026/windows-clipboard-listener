@@ -41,14 +41,27 @@ iwr -useb http://your-server:8001/install.ps1 | iex
 Invoke-WebRequest -Uri "http://your-server:8001/install.ps1" -OutFile "install.ps1"
 
 # 执行安装
-.\install.ps1 -BaseUrl "http://your-server:8001" -Token "your-token"
+.\install.ps1 -BaseUrl "http://your-server:8001" -Token "dev-token"
 ```
 
 ## 文件位置
 
 安装后的文件位置：
 - 程序：`%LOCALAPPDATA%\ClipboardListener\ClipboardClient.exe`
-- 配置：`%LOCALAPPDATA%\ClipboardListener\appsettings.json`
+- 配置：`%LOCALAPPDATA%\ClipboardListener\config.json`
+
+## 直接运行
+
+客户端 exe 文件可以直接双击运行，会使用默认配置：
+- 默认服务器：`ws://156.251.17.161:8001/ws/clipboard`
+- 默认Token：`dev-token`
+
+也可以通过环境变量配置：
+```powershell
+$env:WS_URL = "ws://your-server:8001/ws/clipboard"
+$env:JWT = "your-token"
+.\ClipboardClient.exe
+```
 
 ## 卸载方法
 
