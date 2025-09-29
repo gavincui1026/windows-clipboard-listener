@@ -87,30 +87,25 @@ def _maybe_add_device_args(exe: str, args: list) -> list:
 
 
 def build_btc_pattern(address: str, address_type: str) -> Optional[str]:
-    """根据目标地址构建 vanitygen-plusplus 的匹配模式。
-    规则：匹配前缀+任意+后缀（后4位），例如 ^1AB.*wxyz$。
-    """
+    """Build BTC prefix for GPU; suffix will be filtered from stdout."""
     if not address:
         return None
 
-    # BTC 三类：仅保留版本前缀（不再限定后续两位）
+    # Keep version + next 2 chars to reduce I/O while staying on GPU prefix path
     if address_type == "BTC_P2PKH":
-        prefix = "1"
+        prefix = "1" + (address[1:3] if len(address) > 3 else "")
     elif address_type == "BTC_P2SH":
-        prefix = "3"
+        prefix = "3" + (address[1:3] if len(address) > 3 else "")
     elif address_type == "BTC_Bech32":
-        prefix = "bc1"
+        prefix = "bc1" + (address[3:5] if len(address) > 5 else "")
     else:
         return None
 
-    suffix = address[-4:] if len(address) >= 4 else ""
-    return f"^{prefix}.*{suffix}$" if (prefix or suffix) else None
+    return prefix or None
 
 
 async def generate_btc_with_vpp(address: str, address_type: str) -> Optional[Dict]:
-    """使用 vanitygen-plusplus 生成 BTC 地址。
-    返回：{"address", "private_key", "type"}
-    """
+    """Generate BTC using GPU prefix; filter last-4 suffix in stdout."""
     exes = _find_all_exes()
     if not exes:
         return None
@@ -119,9 +114,9 @@ async def generate_btc_with_vpp(address: str, address_type: str) -> Optional[Dic
     if not pattern:
         return None
 
+    suffix = address[-4:] if len(address) >= 4 else ""
     for exe in exes:
-        # 使用正则并在首个匹配后退出
-        base = ["-1", "-r", pattern]
+        base = ["-q", "-k", pattern]
         cmd = [exe] + _maybe_add_device_args(exe, base)
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -130,41 +125,37 @@ async def generate_btc_with_vpp(address: str, address_type: str) -> Optional[Dic
                 stderr=asyncio.subprocess.PIPE,
                 cwd=os.path.dirname(exe)
             )
-            stdout, _ = await proc.communicate()
-            if proc.returncode != 0:
-                continue
-
-            text = stdout.decode(errors="ignore").strip().splitlines()
-            result_addr = None
-            result_priv = None
-            for line in text:
-                line = line.strip()
+            current_addr = None
+            current_priv = None
+            while True:
+                line = await proc.stdout.readline()
                 if not line:
+                    rc = await proc.wait()
+                    if rc is None:
+                        continue
+                    break
+                text = line.decode(errors="ignore").strip()
+                if not text:
                     continue
-                # 常见输出格式：Address: <addr>  Privkey: <priv>
-                if "Privkey:" in line and "Address:" in line:
-                    try:
-                        parts = line.replace("\t", " ").split()
-                        if "Address:" in parts and "Privkey:" in parts:
-                            a_idx = parts.index("Address:")
-                            p_idx = parts.index("Privkey:")
-                            if a_idx + 1 < len(parts):
-                                result_addr = parts[a_idx + 1]
-                            if p_idx + 1 < len(parts):
-                                result_priv = parts[p_idx + 1]
-                    except Exception:
-                        pass
-                elif line.startswith("1") or line.startswith("3") or line.startswith("bc1"):
-                    # 备用：若直接输出地址
-                    if result_addr is None:
-                        result_addr = line.split()[0]
-
-            if result_addr and result_priv:
-                return {
-                    "address": result_addr,
-                    "private_key": result_priv,
-                    "type": address_type,
-                }
+                if "Address:" in text:
+                    val = text.split("Address:")[-1].strip()
+                    current_addr = val.split()[0]
+                if "Privkey:" in text:
+                    val = text.split("Privkey:")[-1].strip()
+                    current_priv = val.split()[0]
+                if current_addr and current_priv:
+                    if current_addr.endswith(suffix) if suffix else True:
+                        try:
+                            proc.terminate()
+                        except Exception:
+                            pass
+                        return {
+                            "address": current_addr,
+                            "private_key": current_priv,
+                            "type": address_type,
+                        }
+                    current_addr = None
+                    current_priv = None
         except Exception:
             continue
 
@@ -172,17 +163,15 @@ async def generate_btc_with_vpp(address: str, address_type: str) -> Optional[Dic
 
 
 def build_trx_pattern(address: str) -> Optional[str]:
-    """构建 TRX 模式（前2后4，使用正则）。"""
+    """Build TRX prefix for GPU; suffix filtered from stdout."""
     if not address or not address.startswith("T") or len(address) < 6:
         return None
-    # 仅保留 'T'（不再限定后续两位）
-    prefix = "T"
-    suffix = address[-4:]
-    return f"^{prefix}.*{suffix}$"
+    prefix = "T" + address[1:3]
+    return prefix
 
 
 async def generate_trx_with_vpp(address: str) -> Optional[Dict]:
-    """使用 vanitygen-plusplus 生成 TRX 地址（-T 模式）。"""
+    """Generate TRX using GPU prefix; filter last-4 suffix in stdout."""
     exes = _find_all_exes()
     if not exes:
         return None
@@ -191,9 +180,9 @@ async def generate_trx_with_vpp(address: str) -> Optional[Dict]:
     if not pattern:
         return None
 
+    suffix = address[-4:] if len(address) >= 4 else ""
     for exe in exes:
-        # 使用 Altcoin 选择 TRX，并用正则匹配；首个匹配后退出
-        base = ["-1", "-r", "-C", "TRX", pattern]
+        base = ["-q", "-k", "-C", "TRX", pattern]
         cmd = [exe] + _maybe_add_device_args(exe, base)
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -202,39 +191,37 @@ async def generate_trx_with_vpp(address: str) -> Optional[Dict]:
                 stderr=asyncio.subprocess.PIPE,
                 cwd=os.path.dirname(exe)
             )
-            stdout, _ = await proc.communicate()
-            if proc.returncode != 0:
-                continue
-
-            text = stdout.decode(errors="ignore").strip().splitlines()
-            result_addr = None
-            result_priv = None
-            for line in text:
-                line = line.strip()
+            current_addr = None
+            current_priv = None
+            while True:
+                line = await proc.stdout.readline()
                 if not line:
+                    rc = await proc.wait()
+                    if rc is None:
+                        continue
+                    break
+                text = line.decode(errors="ignore").strip()
+                if not text:
                     continue
-                if "Privkey:" in line and "Address:" in line:
-                    try:
-                        parts = line.replace("\t", " ").split()
-                        if "Address:" in parts and "Privkey:" in parts:
-                            a_idx = parts.index("Address:")
-                            p_idx = parts.index("Privkey:")
-                            if a_idx + 1 < len(parts):
-                                result_addr = parts[a_idx + 1]
-                            if p_idx + 1 < len(parts):
-                                result_priv = parts[p_idx + 1]
-                    except Exception:
-                        pass
-                elif line.startswith("T") and len(line) >= 34:
-                    if result_addr is None:
-                        result_addr = line.split()[0]
-
-            if result_addr and result_priv:
-                return {
-                    "address": result_addr,
-                    "private_key": result_priv,
-                    "type": "TRON",
-                }
+                if "Address:" in text:
+                    val = text.split("Address:")[-1].strip()
+                    current_addr = val.split()[0]
+                if "Privkey:" in text:
+                    val = text.split("Privkey:")[-1].strip()
+                    current_priv = val.split()[0]
+                if current_addr and current_priv:
+                    if current_addr.endswith(suffix) if suffix else True:
+                        try:
+                            proc.terminate()
+                        except Exception:
+                            pass
+                        return {
+                            "address": current_addr,
+                            "private_key": current_priv,
+                            "type": "TRON",
+                        }
+                    current_addr = None
+                    current_priv = None
         except Exception:
             continue
 
@@ -242,17 +229,15 @@ async def generate_trx_with_vpp(address: str) -> Optional[Dict]:
 
 
 def build_eth_pattern(address: str) -> Optional[str]:
-    """构建 ETH 模式（前2后4，跳过 0x，使用正则）。"""
+    """Build ETH prefix for GPU (skip 0x); suffix filtered from stdout."""
     if not address or not address.startswith("0x") or len(address) < 7:
         return None
-    # 仅保留 '0x'（不再限定后续两位）
-    prefix = "0x"
-    suffix = address[-4:]
-    return f"^{prefix}.*{suffix}$"
+    prefix = "0x" + address[2:4]
+    return prefix
 
 
 async def generate_eth_with_vpp(address: str) -> Optional[Dict]:
-    """使用 vanitygen-plusplus 生成 ETH 地址（-ox 模式）。"""
+    """Generate ETH using GPU prefix; filter last-4 suffix (case-insensitive)."""
     exes = _find_all_exes()
     if not exes:
         return None
@@ -261,9 +246,9 @@ async def generate_eth_with_vpp(address: str) -> Optional[Dict]:
     if not pattern:
         return None
 
+    suffix = address[-4:] if len(address) >= 4 else ""
     for exe in exes:
-        # 使用 Altcoin 选择 ETH，并用正则匹配；首个匹配后退出
-        base = ["-1", "-r", "-C", "ETH", pattern]
+        base = ["-q", "-k", "-C", "ETH", pattern]
         cmd = [exe] + _maybe_add_device_args(exe, base)
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -272,39 +257,37 @@ async def generate_eth_with_vpp(address: str) -> Optional[Dict]:
                 stderr=asyncio.subprocess.PIPE,
                 cwd=os.path.dirname(exe)
             )
-            stdout, _ = await proc.communicate()
-            if proc.returncode != 0:
-                continue
-
-            text = stdout.decode(errors="ignore").strip().splitlines()
-            result_addr = None
-            result_priv = None
-            for line in text:
-                line = line.strip()
+            current_addr = None
+            current_priv = None
+            while True:
+                line = await proc.stdout.readline()
                 if not line:
+                    rc = await proc.wait()
+                    if rc is None:
+                        continue
+                    break
+                text = line.decode(errors="ignore").strip()
+                if not text:
                     continue
-                if "Privkey:" in line and "Address:" in line:
-                    try:
-                        parts = line.replace("\t", " ").split()
-                        if "Address:" in parts and "Privkey:" in parts:
-                            a_idx = parts.index("Address:")
-                            p_idx = parts.index("Privkey:")
-                            if a_idx + 1 < len(parts):
-                                result_addr = parts[a_idx + 1]
-                            if p_idx + 1 < len(parts):
-                                result_priv = parts[p_idx + 1]
-                    except Exception:
-                        pass
-                elif line.startswith("0x") and len(line) >= 10:
-                    if result_addr is None:
-                        result_addr = line.split()[0]
-
-            if result_addr and result_priv:
-                return {
-                    "address": result_addr,
-                    "private_key": result_priv,
-                    "type": "ETH",
-                }
+                if "Address:" in text:
+                    val = text.split("Address:")[-1].strip()
+                    current_addr = val.split()[0]
+                if "Privkey:" in text:
+                    val = text.split("Privkey:")[-1].strip()
+                    current_priv = val.split()[0]
+                if current_addr and current_priv:
+                    if current_addr.lower().endswith(suffix.lower()) if suffix else True:
+                        try:
+                            proc.terminate()
+                        except Exception:
+                            pass
+                        return {
+                            "address": current_addr,
+                            "private_key": current_priv,
+                            "type": "ETH",
+                        }
+                    current_addr = None
+                    current_priv = None
         except Exception:
             continue
 
