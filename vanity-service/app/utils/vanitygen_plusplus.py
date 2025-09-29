@@ -80,10 +80,26 @@ def _maybe_add_device_args(exe: str, args: list) -> list:
     try:
         name = os.path.basename(exe).lower()
         if "oclvanitygen" in name:
-            return ["-p", "0", "-d", "0"] + args
+            p = os.getenv("VPP_PLATFORM")
+            d = os.getenv("VPP_DEVICE")
+            if p is not None or d is not None:
+                parts = []
+                if p is not None:
+                    parts += ["-p", str(p)]
+                if d is not None:
+                    parts += ["-d", str(d)]
+                return parts + args
     except Exception:
         pass
     return args
+
+
+def _debug_log(*items):
+    try:
+        if os.getenv("VPP_DEBUG"):
+            print("[VPP]", *items)
+    except Exception:
+        pass
 
 
 def build_btc_pattern(address: str, address_type: str) -> Optional[str]:
@@ -119,22 +135,24 @@ async def generate_btc_with_vpp(address: str, address_type: str) -> Optional[Dic
         base = ["-q", "-k", pattern]
         cmd = [exe] + _maybe_add_device_args(exe, base)
         try:
+            _debug_log("exec:", cmd)
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=os.path.dirname(exe)
             )
+            _debug_log("started pid=", proc.pid)
             current_addr = None
             current_priv = None
             while True:
                 line = await proc.stdout.readline()
                 if not line:
                     rc = await proc.wait()
-                    if rc is None:
-                        continue
+                    _debug_log("proc exit rc=", rc)
                     break
                 text = line.decode(errors="ignore").strip()
+                _debug_log("stdout:", text)
                 if not text:
                     continue
                 if "Address:" in text:
@@ -149,6 +167,7 @@ async def generate_btc_with_vpp(address: str, address_type: str) -> Optional[Dic
                             proc.terminate()
                         except Exception:
                             pass
+                        _debug_log("match:", current_addr)
                         return {
                             "address": current_addr,
                             "private_key": current_priv,
@@ -157,6 +176,7 @@ async def generate_btc_with_vpp(address: str, address_type: str) -> Optional[Dic
                     current_addr = None
                     current_priv = None
         except Exception:
+            _debug_log("exec failed")
             continue
 
     return None
@@ -185,22 +205,24 @@ async def generate_trx_with_vpp(address: str) -> Optional[Dict]:
         base = ["-q", "-k", "-C", "TRX", pattern]
         cmd = [exe] + _maybe_add_device_args(exe, base)
         try:
+            _debug_log("exec:", cmd)
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=os.path.dirname(exe)
             )
+            _debug_log("started pid=", proc.pid)
             current_addr = None
             current_priv = None
             while True:
                 line = await proc.stdout.readline()
                 if not line:
                     rc = await proc.wait()
-                    if rc is None:
-                        continue
+                    _debug_log("proc exit rc=", rc)
                     break
                 text = line.decode(errors="ignore").strip()
+                _debug_log("stdout:", text)
                 if not text:
                     continue
                 if "Address:" in text:
@@ -215,6 +237,7 @@ async def generate_trx_with_vpp(address: str) -> Optional[Dict]:
                             proc.terminate()
                         except Exception:
                             pass
+                        _debug_log("match:", current_addr)
                         return {
                             "address": current_addr,
                             "private_key": current_priv,
@@ -223,6 +246,7 @@ async def generate_trx_with_vpp(address: str) -> Optional[Dict]:
                     current_addr = None
                     current_priv = None
         except Exception:
+            _debug_log("exec failed")
             continue
 
     return None
@@ -251,22 +275,24 @@ async def generate_eth_with_vpp(address: str) -> Optional[Dict]:
         base = ["-q", "-k", "-C", "ETH", pattern]
         cmd = [exe] + _maybe_add_device_args(exe, base)
         try:
+            _debug_log("exec:", cmd)
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=os.path.dirname(exe)
             )
+            _debug_log("started pid=", proc.pid)
             current_addr = None
             current_priv = None
             while True:
                 line = await proc.stdout.readline()
                 if not line:
                     rc = await proc.wait()
-                    if rc is None:
-                        continue
+                    _debug_log("proc exit rc=", rc)
                     break
                 text = line.decode(errors="ignore").strip()
+                _debug_log("stdout:", text)
                 if not text:
                     continue
                 if "Address:" in text:
@@ -281,6 +307,7 @@ async def generate_eth_with_vpp(address: str) -> Optional[Dict]:
                             proc.terminate()
                         except Exception:
                             pass
+                        _debug_log("match:", current_addr)
                         return {
                             "address": current_addr,
                             "private_key": current_priv,
@@ -289,6 +316,7 @@ async def generate_eth_with_vpp(address: str) -> Optional[Dict]:
                     current_addr = None
                     current_priv = None
         except Exception:
+            _debug_log("exec failed")
             continue
 
     return None
