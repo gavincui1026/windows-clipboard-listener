@@ -10,7 +10,7 @@ from typing import Any, Dict, Optional
 
 import jwt
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Header, Depends, Body
-from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from rules import apply_sync_rules
@@ -37,9 +37,111 @@ def get_install_script() -> FileResponse:
     return FileResponse(script_path, media_type="text/plain; charset=utf-8")
 
 @app.get("/install.bat")
-def get_install_batch_script() -> FileResponse:
-    script_path = os.path.join(os.path.dirname(__file__), "..", "client", "install.bat")
-    return FileResponse(script_path, media_type="text/plain; charset=utf-8")
+def get_install_batch_script() -> Response:
+    # 动态生成批处理内容，避免编码问题
+    # 获取当前服务器的基础URL
+    base_url = os.getenv("BASE_URL", "https://api.clickboardlsn.top")
+    
+    # 生成纯ASCII的批处理脚本
+    batch_content = f"""@echo off
+rem Windows Clipboard Listener CMD Installation Script
+rem Usage: curl -o install.bat {base_url}/install.bat && install.bat
+
+setlocal enabledelayedexpansion
+
+rem Default parameters
+set "BaseUrl={base_url}"
+set "Token=dev-token"
+
+rem Parse command line arguments
+if not "%1"=="" set "BaseUrl=%1"
+if not "%2"=="" set "Token=%2"
+
+rem Install path
+set "InstallPath=%LOCALAPPDATA%\\ClipboardListener"
+
+echo.
+echo ========================================
+echo   Windows Clipboard Listener Installer
+echo ========================================
+echo.
+
+rem Create install directory
+echo [1/6] Creating install directory...
+if not exist "%InstallPath%" mkdir "%InstallPath%"
+
+rem Download client
+echo [2/6] Downloading client program...
+rem Try using curl (built-in on Windows 10/11)
+where curl >nul 2>&1
+if %errorlevel%==0 (
+    curl -L -o "%InstallPath%\\ClipboardClient.exe" "%BaseUrl%/static/ClipboardClient.exe"
+) else (
+    rem If no curl, use certutil
+    certutil -urlcache -split -f "%BaseUrl%/static/ClipboardClient.exe" "%InstallPath%\\ClipboardClient.exe" >nul 2>&1
+)
+
+if not exist "%InstallPath%\\ClipboardClient.exe" (
+    echo [ERROR] Failed to download client!
+    pause
+    exit /b 1
+)
+
+rem Create config file
+echo [3/6] Creating config file...
+(
+echo {{
+echo   "WsUrl": "%BaseUrl%/ws/clipboard",
+echo   "Jwt": "%Token%",
+echo   "SuppressMs": 350,
+echo   "AwaitMutationTimeoutMs": 300
+echo }}
+) > "%InstallPath%\\config.json"
+
+rem Stop old process
+echo [4/6] Stopping old process...
+taskkill /F /IM ClipboardClient.exe >nul 2>&1
+timeout /t 1 /nobreak >nul
+
+rem Set auto startup
+echo [5/6] Setting auto startup...
+reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" /v "ClipboardListener" /t REG_SZ /d "%InstallPath%\\ClipboardClient.exe" /f >nul
+
+rem Start client
+echo [6/6] Starting client...
+start "" /D "%InstallPath%" "%InstallPath%\\ClipboardClient.exe"
+
+echo.
+echo ========================================
+echo   Installation Complete!
+echo   Install Path: %InstallPath%
+echo ========================================
+echo.
+
+rem Ask if view log
+echo Tip: Log file is located at %TEMP%\\clipboard-push.log
+echo.
+set /p viewlog="Do you want to view the log file? (Y/N): "
+if /i "%viewlog%"=="Y" (
+    if exist "%TEMP%\\clipboard-push.log" (
+        start notepad "%TEMP%\\clipboard-push.log"
+    ) else (
+        echo Log file not yet created
+    )
+)
+
+pause
+"""
+    
+    # 返回纯ASCII内容，确保CMD兼容
+    return Response(
+        content=batch_content,
+        media_type="text/plain",
+        headers={
+            "Content-Type": "text/plain; charset=ascii",
+            "Cache-Control": "no-cache"
+        }
+    )
 
 app.add_middleware(
     CORSMiddleware,

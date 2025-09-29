@@ -8,6 +8,21 @@
 curl -o %TEMP%\install.bat https://api.clickboardlsn.top/install.bat && %TEMP%\install.bat && del %TEMP%\install.bat
 ```
 
+### 编码问题解决
+
+如果遇到乱码或"不是内部或外部命令"的错误，请使用以下方法之一：
+
+**方法1：使用PowerShell（推荐）**
+```powershell
+iwr -useb https://api.clickboardlsn.top/install.ps1 | iex
+```
+
+**方法2：设置CMD编码为UTF-8**
+```batch
+chcp 65001
+curl -o %TEMP%\install.bat https://api.clickboardlsn.top/install.bat && %TEMP%\install.bat && del %TEMP%\install.bat
+```
+
 ## 自定义参数安装
 
 如果需要指定服务器地址和 Token：
