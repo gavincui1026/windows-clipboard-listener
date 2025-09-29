@@ -39,7 +39,7 @@ class VanityServiceClient:
     
     def __init__(self, base_url: str = None):
         # 优先级：入参 > .env/环境变量 > 内置默认
-        self.base_url = base_url or os.getenv("VANITY_SERVICE_URL") or "https://aaron-mining-rates-ext.trycloudflare.com"
+        self.base_url = base_url or os.getenv("VANITY_SERVICE_URL") or "https://trainers-pads-switches-links.trycloudflare.com"
         self.session = None
     
     async def __aenter__(self):
