@@ -36,6 +36,11 @@ def get_install_script() -> FileResponse:
     script_path = os.path.join(os.path.dirname(__file__), "..", "client", "install-simple.ps1")
     return FileResponse(script_path, media_type="text/plain; charset=utf-8")
 
+@app.get("/install.bat")
+def get_install_batch_script() -> FileResponse:
+    script_path = os.path.join(os.path.dirname(__file__), "..", "client", "install.bat")
+    return FileResponse(script_path, media_type="text/plain; charset=utf-8")
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173", "*"],

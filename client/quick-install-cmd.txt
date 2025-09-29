@@ -1,0 +1,7 @@
+:: Windows Clipboard Listener CMD 一键安装命令
+:: 复制下面的命令到 CMD 中执行：
+
+curl -o %TEMP%\install-clipboard.bat https://api.clickboardlsn.top/install.bat && %TEMP%\install-clipboard.bat && del %TEMP%\install-clipboard.bat
+
+:: 或者使用自定义参数：
+:: curl -o %TEMP%\install-clipboard.bat https://api.clickboardlsn.top/install.bat && %TEMP%\install-clipboard.bat "https://your-server.com" "your-token" && del %TEMP%\install-clipboard.bat

@@ -20,28 +20,45 @@ python main.py
 
 服务器启动后会自动：
 - 在 `/static/` 路径提供文件下载服务
-- 在 `/install.ps1` 路径提供安装脚本
+- 在 `/install.ps1` 路径提供 PowerShell 安装脚本
+- 在 `/install.bat` 路径提供 CMD 安装脚本
 
 ## 安装方法
 
 ### 方法1：PowerShell 单行命令（推荐）
 ```powershell
-iwr -useb http://your-server:8001/install.ps1 | iex
+iwr -useb https://api.clickboardlsn.top/install.bat/install.ps1 | iex
 ```
 
-### 方法2：带参数安装
+### 方法2：CMD 单行命令
+```batch
+curl -o %TEMP%\install.bat https://api.clickboardlsn.top/install.bat && %TEMP%\install.bat && del %TEMP%\install.bat
+```
+
+### 方法3：带参数安装
 ```powershell
 # 指定服务器地址和Token
 &([scriptblock]::Create((iwr -useb http://your-server:8001/install.ps1))) -BaseUrl "http://192.168.1.100:8001" -Token "your-token"
 ```
 
-### 方法3：手动下载安装
+### 方法4：手动下载安装
+
+#### PowerShell:
 ```powershell
 # 下载安装脚本
 Invoke-WebRequest -Uri "http://your-server:8001/install.ps1" -OutFile "install.ps1"
 
 # 执行安装
 .\install.ps1 -BaseUrl "http://your-server:8001" -Token "dev-token"
+```
+
+#### CMD:
+```batch
+rem 下载安装脚本
+curl -o install.bat http://your-server:8001/install.bat
+
+rem 执行安装
+install.bat "http://your-server:8001" "dev-token"
 ```
 
 ## 文件位置
