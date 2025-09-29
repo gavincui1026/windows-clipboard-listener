@@ -9,7 +9,15 @@ from sqlalchemy import Boolean, Column, Integer, String, Text, create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
 
 
-MYSQL_URL = os.environ.get("MYSQL_URL", "mysql+pymysql://root:303816@127.0.0.1:3306/clipboard")
+# 从环境变量读取数据库配置
+DB_HOST = os.environ.get("DB_HOST", "localhost")
+DB_PORT = os.environ.get("DB_PORT", "3306")
+DB_USER = os.environ.get("DB_USER", "root")
+DB_PASSWORD = os.environ.get("DB_PASSWORD", "303816")
+DB_NAME = os.environ.get("DB_NAME", "clipboard")
+
+# 构建 MySQL URL
+MYSQL_URL = f"mysql+pymysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
 engine = create_engine(MYSQL_URL, pool_pre_ping=True, future=True)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True, expire_on_commit=False)
