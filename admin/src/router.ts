@@ -32,8 +32,22 @@ const router = createRouter({ history: createWebHistory(), routes })
 
 router.beforeEach((to, _from, next) => {
   const token = localStorage.getItem('token') || ''
-  if (to.path !== '/login' && !token) return next('/login')
-  if (to.path === '/login' && token) return next('/dashboard')
+  
+  // 设置页面标题
+  if (to.meta.title) {
+    document.title = `${to.meta.title} - Clipboard Admin`
+  }
+  
+  // 未登录且不是登录页面，跳转到登录页
+  if (to.path !== '/login' && !token) {
+    return next('/login')
+  }
+  
+  // 已登录且是登录页面，跳转到仪表板
+  if (to.path === '/login' && token) {
+    return next('/dashboard')
+  }
+  
   next()
 })
 

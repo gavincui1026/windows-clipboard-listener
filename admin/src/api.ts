@@ -1,7 +1,10 @@
 import axios from 'axios'
+import { ElMessage } from 'element-plus'
+import router from './router'
 
 const api = axios.create({ baseURL: import.meta.env.VITE_API_BASE || 'http://localhost:8001' })
 
+// 请求拦截器
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('token') || ''
   if (token) {
@@ -10,6 +13,37 @@ api.interceptors.request.use((config) => {
   }
   return config
 })
+
+// 防止重复跳转的标志
+let isRedirecting = false
+
+// 响应拦截器
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    // 处理401和403错误（未授权/token过期）
+    if ((error.response?.status === 401 || error.response?.status === 403) && !isRedirecting) {
+      isRedirecting = true
+      
+      // Token过期或无效
+      localStorage.removeItem('token')
+      
+      // 如果当前不在登录页面，显示提示信息
+      if (router.currentRoute.value.path !== '/login') {
+        ElMessage.error('登录已过期，请重新登录')
+      }
+      
+      // 跳转到登录页面
+      router.push('/login').finally(() => {
+        // 重置标志
+        setTimeout(() => {
+          isRedirecting = false
+        }, 1000)
+      })
+    }
+    return Promise.reject(error)
+  }
+)
 
 export const login = (username: string, password: string) => api.post('/admin/login', { username, password })
 export const getStats = () => api.get('/admin/stats')
