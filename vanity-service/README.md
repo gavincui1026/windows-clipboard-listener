@@ -10,15 +10,24 @@
 - ✅ RESTful API接口
 - ✅ 异步任务处理
 - ✅ Docker容器化部署
+- ✅ TRON地址后缀匹配（后5位相同）
 
 ## 支持的币种
 
-| 币种 | CPU支持 | GPU支持 | 速度（CPU） | 速度（GPU） |
-|------|---------|---------|-------------|-------------|
-| TRON | ✅ | ✅ | 4万/秒 | 3000万/秒 |
-| ETH  | ✅ | ✅ | 2万/秒 | 5000万/秒 |
-| BNB  | ✅ | ✅ | 2万/秒 | 5000万/秒 |
-| BTC  | ⚠️  | ✅ | 1万/秒 | 2000万/秒 |
+| 币种 | CPU支持 | GPU支持 | 速度（CPU） | 速度（GPU） | 特殊功能 |
+|------|---------|---------|-------------|-------------|----------|
+| TRON | ✅ | ✅ | 4万/秒 | 3000万/秒 | 后缀匹配(后5位) |
+| ETH  | ✅ | ✅ | 2万/秒 | 5000万/秒 | - |
+| BNB  | ✅ | ✅ | 2万/秒 | 5000万/秒 | - |
+| BTC  | ⚠️  | ✅ | 1万/秒 | 2000万/秒 | - |
+
+### TRON后缀匹配说明
+
+TRON地址生成现在支持后缀匹配模式：
+- 生成的地址后5位与原地址相同
+- 使用profanity-tron工具实现
+- GPU加速支持，性能更高
+- 自动回退：如果后缀匹配失败，会使用前缀匹配作为备选方案
 
 ## 快速开始
 
@@ -127,6 +136,10 @@ POST /benchmark
 ```bash
 # 创建工具目录
 mkdir gpu_tools
+
+# profanity-tron (TRON后缀匹配) - 已包含在项目中
+# 位置: vanity-service/profanity-tron/
+# 使用: ./profanity.x64 (Linux) 或 profanity.exe (Windows)
 
 # 下载profanity2 (ETH/BNB)
 wget https://github.com/1inch/profanity2/releases/latest/download/profanity2

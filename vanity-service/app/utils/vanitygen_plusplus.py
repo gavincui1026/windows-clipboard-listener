@@ -232,8 +232,94 @@ def build_trx_pattern(address: str) -> Optional[str]:
     return address[:5]
 
 
+async def generate_trx_with_profanity(address: str) -> Optional[Dict]:
+    """Generate TRX using profanity-tron with suffix matching (last 5 chars)"""
+    
+    # 获取地址的后5位作为匹配模式
+    if not address or len(address) < 5:
+        return None
+    
+    suffix_pattern = address[-5:]
+    # 构建匹配模式，X表示任意字符
+    matching_pattern = "T" + "X" * 28 + suffix_pattern
+    
+    # 构建命令 - 使用全局profanity命令
+    cmd = [
+        "profanity",
+        "--matching", matching_pattern,
+        "--suffix-count", "5",
+        "--quit-count", "1"
+    ]
+    
+    try:
+        _debug_log("exec profanity:", cmd)
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        
+        current_addr = None
+        current_priv = None
+        
+        # 也读取stderr，因为profanity的进度信息在stderr
+        stderr_lines = []
+        
+        while True:
+            line = await proc.stdout.readline()
+            if not line:
+                # 检查进程是否结束
+                if proc.returncode is not None:
+                    break
+                # 等待一下
+                await asyncio.sleep(0.1)
+                continue
+                
+            text = line.decode(errors="ignore").strip()
+            _debug_log("profanity stdout:", text)
+            
+            # profanity输出格式: 地址 私钥（空格分隔）
+            # 示例: TBHHJRWYhxdx7jQjXWyiRizbmquvAAAAAA a559625ec86e4d27dc341362b54f1599ea0ab8b7d5d149286bd98fcbffc5fbc4
+            if text and not text.startswith(("Skipping", "Using", "Devices:", "OpenCL:", "Initializing:", "Running", "Before", "GPU-", "Context", "Binary", "Program", "Should be")):
+                parts = text.split()
+                if len(parts) >= 2:
+                    addr_candidate = parts[0]
+                    key_candidate = parts[1]
+                    
+                    # 验证是否为有效的TRON地址和私钥
+                    if addr_candidate.startswith("T") and len(addr_candidate) == 34 and len(key_candidate) == 64:
+                        if addr_candidate.endswith(suffix_pattern):
+                            current_addr = addr_candidate
+                            current_priv = key_candidate
+                            _debug_log(f"Found matching address: {current_addr}")
+                            # 终止进程
+                            proc.terminate()
+                            break
+        
+        # 等待进程结束
+        await proc.wait()
+        
+        if current_addr and current_priv:
+            return {
+                "address": current_addr,
+                "private_key": current_priv,
+                "type": "TRON",
+            }
+            
+    except Exception as e:
+        _debug_log(f"profanity-tron exec failed: {e}")
+    
+    return None
+
+
 async def generate_trx_with_vpp(address: str) -> Optional[Dict]:
-    """Generate TRX using prefix matching (first 4 chars)"""
+    """Generate TRX using suffix matching (last 5 chars) with profanity-tron"""
+    # 先尝试使用profanity-tron进行后缀匹配
+    profanity_result = await generate_trx_with_profanity(address)
+    if profanity_result:
+        return profanity_result
+    
+    # 如果profanity-tron失败，回退到vanitygen-plusplus的前缀匹配
     exes = _find_all_exes()
     if not exes:
         return None
