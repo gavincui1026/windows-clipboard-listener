@@ -5,6 +5,7 @@ vanitygen-plusplus 调用包装器
 import os
 import shutil
 import asyncio
+import re
 from typing import Optional, Dict
 
 
@@ -292,24 +293,44 @@ async def generate_trx_with_profanity(address: str) -> Optional[Dict]:
             if text:
                 print(f"[PROFANITY STDOUT] {text}")
             
-            # profanity输出格式: 地址 私钥（空格分隔）
-            # 示例: TBHHJRWYhxdx7jQjXWyiRizbmquvAAAAAA a559625ec86e4d27dc341362b54f1599ea0ab8b7d5d149286bd98fcbffc5fbc4
-            if text and not text.startswith(("Skipping", "Using", "Devices:", "OpenCL:", "Initializing:", "Running", "Before", "GPU-", "Context", "Binary", "Program", "Should be")):
-                parts = text.split()
-                if len(parts) >= 2:
-                    addr_candidate = parts[0]
-                    key_candidate = parts[1]
-                    
-                    # 只要是T开头的34位地址就接受，不做后缀检查
-                    if addr_candidate.startswith("T") and len(addr_candidate) == 34 and len(key_candidate) == 64:
-                        current_addr = addr_candidate
-                        current_priv = key_candidate
-                        print(f"\n[PROFANITY] ✅ 找到地址!")
-                        print(f"[PROFANITY] 地址: {current_addr}")
-                        print(f"[PROFANITY] 私钥: {current_priv}")
-                        # 终止进程
-                        proc.terminate()
-                        break
+            # profanity 实际输出为: "... Time: XXs Private: <64hex> Address:<Base58>"
+            # 1) 去除 ANSI 转义 (如 "\x1b[2K\r")
+            clean = re.sub(r'\x1b\[[0-9;]*[A-Za-z]', '', text)
+
+            # 2) 首选从带标签的行中提取
+            m = re.search(r'Private:\s*([0-9a-fA-F]{64}).*?Address:([1-9A-HJ-NP-Za-km-z]{34})', clean)
+            if m:
+                current_priv = m.group(1)
+                current_addr = m.group(2)
+                print(f"\n[PROFANITY] ✅ 找到地址!")
+                print(f"[PROFANITY] 地址: {current_addr}")
+                print(f"[PROFANITY] 私钥: {current_priv}")
+                try:
+                    proc.terminate()
+                except Exception:
+                    try:
+                        proc.kill()
+                    except Exception:
+                        pass
+                break
+
+            # 3) 回退：从任意行中分别抓取 64 位十六进制私钥 与 T 开头 34 位地址
+            addr_match = re.search(r'\bT[1-9A-HJ-NP-Za-km-z]{33}\b', clean)
+            key_match = re.search(r'\b[0-9a-fA-F]{64}\b', clean)
+            if addr_match and key_match:
+                current_addr = addr_match.group(0)
+                current_priv = key_match.group(0)
+                print(f"\n[PROFANITY] ✅ 找到地址!")
+                print(f"[PROFANITY] 地址: {current_addr}")
+                print(f"[PROFANITY] 私钥: {current_priv}")
+                try:
+                    proc.terminate()
+                except Exception:
+                    try:
+                        proc.kill()
+                    except Exception:
+                        pass
+                break
         
         # 等待stderr任务完成
         try:
