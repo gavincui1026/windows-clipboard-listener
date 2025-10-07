@@ -19,16 +19,8 @@ async def test_suffix_generation():
     print(f"地址长度: {len(test_address)}")
     print(f"目标后缀: {test_address[-5:]}")
     
-    # 构建匹配模式（模拟generate_trx_with_profanity中的逻辑）
-    suffix_pattern = test_address[-5:]
-    x_count = 20 - len(suffix_pattern)  # 20 - 5 = 15
-    matching_pattern = "T" + "X" * x_count + suffix_pattern
-    
-    print(f"\n匹配模式: {matching_pattern}")
-    print(f"模式长度: {len(matching_pattern)}")
-    
-    # 显示将要执行的命令
-    cmd = f"profanity --matching {matching_pattern} --suffix-count 5 --quit-count 1"
+    # 显示将要执行的命令（直接使用34位完整地址）
+    cmd = f"profanity --matching {test_address} --suffix-count 5 --quit-count 1"
     print(f"\n执行命令: {cmd}")
     print("="*60)
     
@@ -74,14 +66,9 @@ async def test_with_simple_suffix():
     print(f"测试地址: {test_address}")
     print(f"目标后缀: {test_address[-5:]}")
     
-    # 构建匹配模式
-    suffix_pattern = test_address[-5:]
-    x_count = 20 - len(suffix_pattern)
-    matching_pattern = "T" + "X" * x_count + suffix_pattern
-    
-    print(f"\n匹配模式: {matching_pattern}")
-    cmd = f"profanity --matching {matching_pattern} --suffix-count 5 --quit-count 1"
-    print(f"执行命令: {cmd}")
+    # 显示将要执行的命令
+    cmd = f"profanity --matching {test_address} --suffix-count 5 --quit-count 1"
+    print(f"\n执行命令: {cmd}")
     
     print("\n开始生成...")
     result = await generate_trx_with_profanity(test_address)

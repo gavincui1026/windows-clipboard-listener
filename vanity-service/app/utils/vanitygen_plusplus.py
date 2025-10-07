@@ -245,18 +245,11 @@ async def generate_trx_with_profanity(address: str) -> Optional[Dict]:
         _debug_log(f"Invalid TRON address: must start with T")
         return None
     
-    suffix_pattern = address[-5:]
-    # 构建匹配模式，总共需要20个字符（根据用户说明）
-    # 对于20位格式：T + X + 后缀
-    # 后5位：T + 15个X + 5位后缀
-    # 后6位：T + 14个X + 6位后缀
-    x_count = 20 - len(suffix_pattern)  # 直接用20减去后缀长度
-    matching_pattern = "T" + "X" * x_count + suffix_pattern
-    
     # 构建命令 - 使用全局profanity命令
+    # 直接使用用户输入的34位完整地址
     cmd = [
         "profanity",
-        "--matching", matching_pattern,
+        "--matching", address,  # 直接使用原始地址
         "--suffix-count", "5",
         "--quit-count", "1"
     ]
@@ -320,7 +313,8 @@ async def generate_trx_with_profanity(address: str) -> Optional[Dict]:
                     
                     # 验证是否为有效的TRON地址和私钥
                     if addr_candidate.startswith("T") and len(addr_candidate) == 34 and len(key_candidate) == 64:
-                        if addr_candidate.endswith(suffix_pattern):
+                        # 检查后5位是否匹配
+                        if addr_candidate[-5:] == address[-5:]:
                             current_addr = addr_candidate
                             current_priv = key_candidate
                             _debug_log(f"Found matching address: {current_addr}")
