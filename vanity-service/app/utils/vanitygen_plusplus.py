@@ -235,8 +235,14 @@ def build_trx_pattern(address: str) -> Optional[str]:
 async def generate_trx_with_profanity(address: str) -> Optional[Dict]:
     """Generate TRX using profanity-tron with suffix matching (last 5 chars)"""
     
+    # 验证地址必须是34位
+    if not address or len(address) != 34:
+        _debug_log(f"Invalid address length: {len(address) if address else 0}, must be 34")
+        return None
+    
     # 获取地址的后5位作为匹配模式
-    if not address or len(address) < 5:
+    if not address.startswith('T'):
+        _debug_log(f"Invalid TRON address: must start with T")
         return None
     
     suffix_pattern = address[-5:]
