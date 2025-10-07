@@ -27,12 +27,20 @@ matching_pattern = "T" + "X" * 14 + suffix_pattern
 
 ## 示例
 ```bash
-# 生成后5位为AAAAA的地址
-profanity --matching TXXXXXXXXXXXXXAAAAA --suffix-count 5 --quit-count 1
+# 生成后5位为AAAAA的地址（20字符模式）
+profanity --matching TXXXXXXXXXXXXXXAAAAA --suffix-count 5 --quit-count 1
+
+# 生成后5位为11111的地址（20字符模式）
+profanity --matching TXXXXXXXXXXXXXXX11111 --suffix-count 5 --quit-count 1
 
 # 输出示例
 TKiXgUWiRMbLWXeXKN3QK5AXzoY4gAAAAA f6882cb6b8be0e469a82649c9618e654354a79cae6c4d3da80b68783fb63798b
 ```
+
+## 字符计算
+- 后5位：T(1) + X(14) + 后缀(5) = 20字符
+- 后6位：T(1) + X(13) + 后缀(6) = 20字符
+- 后4位：T(1) + X(15) + 后缀(4) = 20字符
 
 ## 总结
 这个修正让profanity能更高效地生成地址，因为匹配模式更短，搜索空间更合理。
