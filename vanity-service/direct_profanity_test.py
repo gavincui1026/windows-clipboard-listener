@@ -24,7 +24,7 @@ def read_error(proc, name):
 
 # 测试1：生成简单的后缀
 print("=== 测试1：生成后5位为11111的地址 ===")
-cmd = ["profanity", "--matching", "TXXXXXXXXXXXXXXXXXXXXXXXXXX11111", "--suffix-count", "5", "--quit-count", "1"]
+cmd = ["profanity", "--matching", "TXXXXXXXXXXXXX11111", "--suffix-count", "5", "--quit-count", "1"]
 print("命令:", " ".join(cmd))
 
 proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -59,7 +59,7 @@ import os
 if os.path.exists(output_file):
     os.remove(output_file)
 
-cmd = ["profanity", "--matching", "TXXXXXXXXXXXXXXXXXXXXXXXXXX22222", "--suffix-count", "5", "--quit-count", "1", "--output", output_file]
+cmd = ["profanity", "--matching", "TXXXXXXXXXXXXX22222", "--suffix-count", "5", "--quit-count", "1", "--output", output_file]
 print("命令:", " ".join(cmd))
 
 result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)

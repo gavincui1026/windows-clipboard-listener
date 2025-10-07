@@ -30,7 +30,7 @@
 
 命令行直接测试：
 ```bash
-profanity --matching TXXXXXXXXXXXXXXXXXXXXXXXXXXAAAAA --suffix-count 5 --quit-count 1
+profanity --matching TXXXXXXXXXXXXXAAAAA --suffix-count 5 --quit-count 1
 ```
 
 Python测试：

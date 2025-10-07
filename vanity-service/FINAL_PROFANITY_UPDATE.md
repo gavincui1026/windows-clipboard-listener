@@ -38,7 +38,7 @@ if text and not text.startswith(("Skipping", "Using", "Devices:", "OpenCL:", "In
 ## 测试命令
 ```bash
 # 直接测试profanity
-profanity --matching TXXXXXXXXXXXXXXXXXXXXXXXXXX11111 --suffix-count 5 --quit-count 1
+profanity --matching TXXXXXXXXXXXXX11111 --suffix-count 5 --quit-count 1
 
 # 测试Python集成
 cd vanity-service

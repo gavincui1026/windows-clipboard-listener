@@ -46,7 +46,7 @@ if text and not text.startswith(("Skipping", "Using", "Devices:", "OpenCL:", "In
 ## 验证方法
 运行以下命令验证输出格式：
 ```bash
-profanity --matching TXXXXXXXXXXXXXXXXXXXXXXXXXX11111 --suffix-count 5 --quit-count 1
+profanity --matching TXXXXXXXXXXXXX11111 --suffix-count 5 --quit-count 1
 ```
 
 应该看到类似这样的输出：

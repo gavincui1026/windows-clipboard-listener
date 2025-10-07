@@ -240,8 +240,9 @@ async def generate_trx_with_profanity(address: str) -> Optional[Dict]:
         return None
     
     suffix_pattern = address[-5:]
-    # 构建匹配模式，X表示任意字符
-    matching_pattern = "T" + "X" * 28 + suffix_pattern
+    # 构建匹配模式，只需要部分匹配，不需要完整34字符
+    # T + 14个X + 5个后缀字符 = 20个字符
+    matching_pattern = "T" + "X" * 14 + suffix_pattern
     
     # 构建命令 - 使用全局profanity命令
     cmd = [

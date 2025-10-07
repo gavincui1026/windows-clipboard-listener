@@ -9,7 +9,7 @@ print("=== Profanity快速测试 ===\n")
 
 # 测试1：非常简单的后缀（1个字符）
 print("测试1：生成后1位为A的地址（应该立即完成）")
-cmd = ["profanity", "--matching", "TXXXXXXXXXXXXXXXXXXXXXXXXXXXA", "--suffix-count", "1", "--quit-count", "1"]
+cmd = ["profanity", "--matching", "TXXXXXXXXXXXXXXXXXXA", "--suffix-count", "1", "--quit-count", "1"]
 print("命令:", " ".join(cmd))
 print("-" * 60)
 
