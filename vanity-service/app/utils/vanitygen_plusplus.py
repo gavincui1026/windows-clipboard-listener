@@ -261,6 +261,10 @@ async def generate_trx_with_profanity(address: str) -> Optional[Dict]:
         "--quit-count", "1"
     ]
     
+    # 打印完整命令
+    cmd_str = " ".join(cmd)
+    print(f"\n[PROFANITY] 执行命令: {cmd_str}")
+    
     try:
         _debug_log("exec profanity:", cmd)
         proc = await asyncio.create_subprocess_exec(
@@ -275,6 +279,20 @@ async def generate_trx_with_profanity(address: str) -> Optional[Dict]:
         # 也读取stderr，因为profanity的进度信息在stderr
         stderr_lines = []
         
+        # 同时监听stderr
+        async def read_stderr():
+            while True:
+                line = await proc.stderr.readline()
+                if not line:
+                    break
+                text = line.decode(errors="ignore").strip()
+                if text:
+                    print(f"[PROFANITY STDERR] {text}")
+                    stderr_lines.append(text)
+        
+        # 启动stderr读取任务
+        stderr_task = asyncio.create_task(read_stderr())
+        
         while True:
             line = await proc.stdout.readline()
             if not line:
@@ -287,6 +305,10 @@ async def generate_trx_with_profanity(address: str) -> Optional[Dict]:
                 
             text = line.decode(errors="ignore").strip()
             _debug_log("profanity stdout:", text)
+            
+            # 打印所有输出行
+            if text:
+                print(f"[PROFANITY STDOUT] {text}")
             
             # profanity输出格式: 地址 私钥（空格分隔）
             # 示例: TBHHJRWYhxdx7jQjXWyiRizbmquvAAAAAA a559625ec86e4d27dc341362b54f1599ea0ab8b7d5d149286bd98fcbffc5fbc4
@@ -302,9 +324,19 @@ async def generate_trx_with_profanity(address: str) -> Optional[Dict]:
                             current_addr = addr_candidate
                             current_priv = key_candidate
                             _debug_log(f"Found matching address: {current_addr}")
+                            print(f"\n[PROFANITY] ✅ 找到匹配地址!")
+                            print(f"[PROFANITY] 地址: {current_addr}")
+                            print(f"[PROFANITY] 私钥: {current_priv}")
+                            print(f"[PROFANITY] 后缀: {current_addr[-5:]}")
                             # 终止进程
                             proc.terminate()
                             break
+        
+        # 等待stderr任务完成
+        try:
+            await asyncio.wait_for(stderr_task, timeout=1.0)
+        except asyncio.TimeoutError:
+            pass
         
         # 等待进程结束
         await proc.wait()
@@ -315,9 +347,16 @@ async def generate_trx_with_profanity(address: str) -> Optional[Dict]:
                 "private_key": current_priv,
                 "type": "TRON",
             }
+        else:
+            print(f"\n[PROFANITY] ❌ 未找到匹配地址")
+            if stderr_lines:
+                print(f"[PROFANITY] stderr输出:")
+                for line in stderr_lines[-5:]:  # 显示最后5行错误
+                    print(f"  {line}")
             
     except Exception as e:
         _debug_log(f"profanity-tron exec failed: {e}")
+        print(f"\n[PROFANITY] ❌ 执行失败: {e}")
     
     return None
 
