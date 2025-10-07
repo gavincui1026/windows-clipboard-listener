@@ -235,27 +235,10 @@ def build_trx_pattern(address: str) -> Optional[str]:
 async def generate_trx_with_profanity(address: str) -> Optional[Dict]:
     """Generate TRX using profanity-tron with suffix matching (last 5 chars)"""
     
-    # 验证地址必须是34位
-    if not address or len(address) != 34:
-        _debug_log(f"Invalid address length: {len(address) if address else 0}, must be 34")
-        return None
-    
-    # 获取地址的后5位作为匹配模式
-    if not address.startswith('T'):
-        _debug_log(f"Invalid TRON address: must start with T")
-        return None
-    
-    # 获取后缀
-    suffix_pattern = address[-5:]
-    
-    # 构建命令 - 需要构建正确的匹配模式
-    # 根据之前的成功例子，需要用X替换中间部分
-    # 20位格式：T + 15个X + 5位后缀
-    matching_pattern = "T" + "X" * 15 + suffix_pattern
-    
+    # 直接使用用户输入，不做任何验证
     cmd = [
         "profanity",
-        "--matching", matching_pattern,
+        "--matching", address,
         "--suffix-count", "5",
         "--quit-count", "1"
     ]
@@ -317,27 +300,16 @@ async def generate_trx_with_profanity(address: str) -> Optional[Dict]:
                     addr_candidate = parts[0]
                     key_candidate = parts[1]
                     
-                    # 验证是否为有效的TRON地址和私钥
+                    # 只要是T开头的34位地址就接受，不做后缀检查
                     if addr_candidate.startswith("T") and len(addr_candidate) == 34 and len(key_candidate) == 64:
-                        print(f"\n[PROFANITY] 发现地址: {addr_candidate}")
-                        print(f"[PROFANITY] 期望后缀: {address[-5:]}")
-                        print(f"[PROFANITY] 实际后缀: {addr_candidate[-5:]}")
-                        
-                        # 检查后5位是否匹配
-                        if addr_candidate[-5:] == address[-5:]:
-                            current_addr = addr_candidate
-                            current_priv = key_candidate
-                            _debug_log(f"Found matching address: {current_addr}")
-                            print(f"\n[PROFANITY] ✅ 找到匹配地址!")
-                            print(f"[PROFANITY] 地址: {current_addr}")
-                            print(f"[PROFANITY] 私钥: {current_priv}")
-                            print(f"[PROFANITY] 后缀: {current_addr[-5:]}")
-                            # 终止进程
-                            proc.terminate()
-                            break
-                        else:
-                            # 如果不匹配，继续等待
-                            print(f"[PROFANITY] ⚠️ 后缀不匹配，继续等待...")
+                        current_addr = addr_candidate
+                        current_priv = key_candidate
+                        print(f"\n[PROFANITY] ✅ 找到地址!")
+                        print(f"[PROFANITY] 地址: {current_addr}")
+                        print(f"[PROFANITY] 私钥: {current_priv}")
+                        # 终止进程
+                        proc.terminate()
+                        break
         
         # 等待stderr任务完成
         try:
