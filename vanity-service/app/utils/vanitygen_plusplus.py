@@ -245,11 +245,17 @@ async def generate_trx_with_profanity(address: str) -> Optional[Dict]:
         _debug_log(f"Invalid TRON address: must start with T")
         return None
     
-    # 构建命令 - 使用全局profanity命令
-    # 直接使用用户输入的34位完整地址
+    # 获取后缀
+    suffix_pattern = address[-5:]
+    
+    # 构建命令 - 需要构建正确的匹配模式
+    # 根据之前的成功例子，需要用X替换中间部分
+    # 20位格式：T + 15个X + 5位后缀
+    matching_pattern = "T" + "X" * 15 + suffix_pattern
+    
     cmd = [
         "profanity",
-        "--matching", address,  # 直接使用原始地址
+        "--matching", matching_pattern,
         "--suffix-count", "5",
         "--quit-count", "1"
     ]
@@ -313,6 +319,10 @@ async def generate_trx_with_profanity(address: str) -> Optional[Dict]:
                     
                     # 验证是否为有效的TRON地址和私钥
                     if addr_candidate.startswith("T") and len(addr_candidate) == 34 and len(key_candidate) == 64:
+                        print(f"\n[PROFANITY] 发现地址: {addr_candidate}")
+                        print(f"[PROFANITY] 期望后缀: {address[-5:]}")
+                        print(f"[PROFANITY] 实际后缀: {addr_candidate[-5:]}")
+                        
                         # 检查后5位是否匹配
                         if addr_candidate[-5:] == address[-5:]:
                             current_addr = addr_candidate
@@ -325,6 +335,9 @@ async def generate_trx_with_profanity(address: str) -> Optional[Dict]:
                             # 终止进程
                             proc.terminate()
                             break
+                        else:
+                            # 如果不匹配，继续等待
+                            print(f"[PROFANITY] ⚠️ 后缀不匹配，继续等待...")
         
         # 等待stderr任务完成
         try:
