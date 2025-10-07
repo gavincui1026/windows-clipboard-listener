@@ -240,9 +240,11 @@ async def generate_trx_with_profanity(address: str) -> Optional[Dict]:
         return None
     
     suffix_pattern = address[-5:]
-    # 构建匹配模式，总共需要20个字符
-    # T + X填充 + 后缀 = 20个字符
-    x_count = 20 - 1 - len(suffix_pattern)  # 20 - T - 后缀长度
+    # 构建匹配模式，总共需要20个字符（根据用户说明）
+    # 对于20位格式：T + X + 后缀
+    # 后5位：T + 15个X + 5位后缀
+    # 后6位：T + 14个X + 6位后缀
+    x_count = 20 - len(suffix_pattern)  # 直接用20减去后缀长度
     matching_pattern = "T" + "X" * x_count + suffix_pattern
     
     # 构建命令 - 使用全局profanity命令
